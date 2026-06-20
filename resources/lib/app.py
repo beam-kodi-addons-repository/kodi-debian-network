@@ -72,7 +72,12 @@ class NetworkAssistantApp:
         return ""
 
     def _selected_backend_mode(self) -> str:
-        raw_mode = (self._setting("backend_mode") or "0").strip().lower()
+        getter = getattr(self.addon, "getSettingInt", None)
+        if callable(getter):
+            raw_mode = str(getter("backend_mode"))
+        else:
+            raw_mode = self._setting("backend_mode") or "0"
+        raw_mode = raw_mode.strip().lower()
         return BACKEND_MODE_MAP.get(raw_mode, "auto")
 
     def _addon_path(self) -> str:
