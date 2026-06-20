@@ -1,0 +1,145 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: network-assistant\n"
+"Language: cs_CZ\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgctxt "#30000"
+msgid "Network Assistant"
+msgstr "Sitovy asistent"
+
+msgctxt "#30001"
+msgid "Backend mode"
+msgstr "Rezim backendu"
+
+msgctxt "#30002"
+msgid "Helper socket"
+msgstr "Socket helperu"
+
+msgctxt "#30003"
+msgid "Auto refresh (seconds)"
+msgstr "Automaticka obnova (sekundy)"
+
+msgctxt "#30007"
+msgid "Wi-Fi networks"
+msgstr "Wi-Fi site"
+
+msgctxt "#30008"
+msgid "Interfaces"
+msgstr "Rozhrani"
+
+msgctxt "#30009"
+msgid "Status"
+msgstr "Stav"
+
+msgctxt "#30010"
+msgid "Reload backend"
+msgstr "Znovu nacist backend"
+
+msgctxt "#30011"
+msgid "Rescan Wi-Fi"
+msgstr "Znovu prohledat Wi-Fi"
+
+msgctxt "#30012"
+msgid "Refresh"
+msgstr "Obnovit"
+
+msgctxt "#30015"
+msgid "Connected"
+msgstr "Pripojeno"
+
+msgctxt "#30017"
+msgid "Connect / edit"
+msgstr "Pripojit / upravit"
+
+msgctxt "#30018"
+msgid "Save profile and autoconnect?"
+msgstr "Ulozit profil a automaticky pripojovat?"
+
+msgctxt "#30019"
+msgid "DHCP"
+msgstr "DHCP"
+
+msgctxt "#30020"
+msgid "Static"
+msgstr "Staticka"
+
+msgctxt "#30021"
+msgid "IP address"
+msgstr "IP adresa"
+
+msgctxt "#30022"
+msgid "Network configuration"
+msgstr "Konfigurace site"
+
+msgctxt "#30023"
+msgid "Gateway"
+msgstr "Brana"
+
+msgctxt "#30024"
+msgid "DNS servers (comma separated)"
+msgstr "DNS servery (oddelene carkou)"
+
+msgctxt "#30025"
+msgid "Password"
+msgstr "Heslo"
+
+msgctxt "#30026"
+msgid "No Wi-Fi networks found"
+msgstr "Nebyly nalezeny zadne Wi-Fi site"
+
+msgctxt "#30027"
+msgid "No interfaces found"
+msgstr "Nebyla nalezena zadna rozhrani"
+
+msgctxt "#30028"
+msgid "Backend"
+msgstr "Backend"
+
+msgctxt "#30029"
+msgid "Active service"
+msgstr "Aktivni sluzba"
+
+msgctxt "#30030"
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgctxt "#30031"
+msgid "Ethernet"
+msgstr "Ethernet"
+
+msgctxt "#30032"
+msgid "Prefix length"
+msgstr "Delka prefixu"
+
+msgctxt "#30033"
+msgid "System integration"
+msgstr "Systemova integrace"
+
+msgctxt "#30034"
+msgid "Install / repair system integration"
+msgstr "Nainstalovat / opravit systemovou integraci"
+
+msgctxt "#30036"
+msgid "Run the bootstrap now?"
+msgstr "Spustit ted bootstrap?"
+
+msgctxt "#30037"
+msgid "Installer output"
+msgstr "Vystup installeru"
+
+msgctxt "#30038"
+msgid "Bootstrap completed successfully"
+msgstr "Bootstrap byl uspesne dokonceny"
+
+msgctxt "#30040"
+msgid "The installer returned an error"
+msgstr "Installer vratil chybu"
+
+msgctxt "#30041"
+msgid "Bootstrap is required before network control will work"
+msgstr "Pred pouzitim sitoveho ovladani je potreba provest bootstrap"
+
+msgctxt "#30042"
+msgid "The add-on will install the helper service and required system files."
+msgstr "Doplnek nainstaluje helper service a potrebne systemove soubory."

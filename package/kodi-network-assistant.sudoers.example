@@ -1,0 +1,3 @@
+# Replace "kodi" with the actual account that runs Kodi.
+# This is intentionally narrow: it only allows the fixed installer command.
+kodi ALL=(root) NOPASSWD: /usr/local/sbin/kodi-network-assistant-system-install

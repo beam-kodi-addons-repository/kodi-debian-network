@@ -1,0 +1,1 @@
+"""Shared Python code for the Network Assistant add-on."""

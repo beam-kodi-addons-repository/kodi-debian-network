@@ -1,0 +1,7 @@
+<settings>
+  <category label="30000">
+    <setting id="backend_mode" type="enum" label="30001" default="0" values="Auto|Helper|Demo" />
+    <setting id="helper_socket" type="text" label="30002" default="/run/kodi-network-helper.sock" />
+    <setting id="refresh_seconds" type="number" label="30003" default="10" />
+  </category>
+</settings>

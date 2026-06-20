@@ -1,0 +1,145 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: network-assistant\n"
+"Language: en_GB\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgctxt "#30000"
+msgid "Network Assistant"
+msgstr "Network Assistant"
+
+msgctxt "#30001"
+msgid "Backend mode"
+msgstr "Backend mode"
+
+msgctxt "#30002"
+msgid "Helper socket"
+msgstr "Helper socket"
+
+msgctxt "#30003"
+msgid "Auto refresh (seconds)"
+msgstr "Auto refresh (seconds)"
+
+msgctxt "#30007"
+msgid "Wi-Fi networks"
+msgstr "Wi-Fi networks"
+
+msgctxt "#30008"
+msgid "Interfaces"
+msgstr "Interfaces"
+
+msgctxt "#30009"
+msgid "Status"
+msgstr "Status"
+
+msgctxt "#30010"
+msgid "Reload backend"
+msgstr "Reload backend"
+
+msgctxt "#30011"
+msgid "Rescan Wi-Fi"
+msgstr "Rescan Wi-Fi"
+
+msgctxt "#30012"
+msgid "Refresh"
+msgstr "Refresh"
+
+msgctxt "#30015"
+msgid "Connected"
+msgstr "Connected"
+
+msgctxt "#30017"
+msgid "Connect / edit"
+msgstr "Connect / edit"
+
+msgctxt "#30018"
+msgid "Save profile and autoconnect?"
+msgstr "Save profile and autoconnect?"
+
+msgctxt "#30019"
+msgid "DHCP"
+msgstr "DHCP"
+
+msgctxt "#30020"
+msgid "Static"
+msgstr "Static"
+
+msgctxt "#30021"
+msgid "IP address"
+msgstr "IP address"
+
+msgctxt "#30022"
+msgid "Network configuration"
+msgstr "Network configuration"
+
+msgctxt "#30023"
+msgid "Gateway"
+msgstr "Gateway"
+
+msgctxt "#30024"
+msgid "DNS servers (comma separated)"
+msgstr "DNS servers (comma separated)"
+
+msgctxt "#30025"
+msgid "Password"
+msgstr "Password"
+
+msgctxt "#30026"
+msgid "No Wi-Fi networks found"
+msgstr "No Wi-Fi networks found"
+
+msgctxt "#30027"
+msgid "No interfaces found"
+msgstr "No interfaces found"
+
+msgctxt "#30028"
+msgid "Backend"
+msgstr "Backend"
+
+msgctxt "#30029"
+msgid "Active service"
+msgstr "Active service"
+
+msgctxt "#30030"
+msgid "Wi-Fi"
+msgstr "Wi-Fi"
+
+msgctxt "#30031"
+msgid "Ethernet"
+msgstr "Ethernet"
+
+msgctxt "#30032"
+msgid "Prefix length"
+msgstr "Prefix length"
+
+msgctxt "#30033"
+msgid "System integration"
+msgstr "System integration"
+
+msgctxt "#30034"
+msgid "Install / repair system integration"
+msgstr "Install / repair system integration"
+
+msgctxt "#30036"
+msgid "Run the bootstrap now?"
+msgstr "Run the bootstrap now?"
+
+msgctxt "#30037"
+msgid "Installer output"
+msgstr "Installer output"
+
+msgctxt "#30038"
+msgid "Bootstrap completed successfully"
+msgstr "Bootstrap completed successfully"
+
+msgctxt "#30040"
+msgid "The installer returned an error"
+msgstr "The installer returned an error"
+
+msgctxt "#30041"
+msgid "Bootstrap is required before network control will work"
+msgstr "Bootstrap is required before network control will work"
+
+msgctxt "#30042"
+msgid "The add-on will install the helper service and required system files."
+msgstr "The add-on will install the helper service and required system files."

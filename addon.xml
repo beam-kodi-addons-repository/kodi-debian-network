@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.program.networkassistant" name="Network Assistant" version="0.1.0" provider-name="Copilot">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0" />
+  </requires>
+  <extension point="xbmc.python.pluginsource" library="main.py">
+    <provides>executable</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_gb">Kodi network control for Debian and Raspberry Pi 5</summary>
+    <summary lang="cs_cz">Ovladani site v Kodi pro Debian a Raspberry Pi 5</summary>
+    <description lang="en_gb">Browse nearby Wi-Fi networks, connect and disconnect, and manage IP configuration through a helper service.</description>
+    <description lang="cs_cz">Prochazejte Wi-Fi site, pripojujte a odpojujte se a spravujte IP konfiguraci pres pomocnou sluzbu.</description>
+    <platform>linux</platform>
+  </extension>
+</addon>
