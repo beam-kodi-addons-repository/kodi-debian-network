@@ -147,3 +147,27 @@ msgstr "Doplnek nainstaluje helper service a potrebne systemove soubory."
 msgctxt "#30043"
 msgid "Hidden network"
 msgstr "Skryta sit"
+
+msgctxt "#30044"
+msgid "Disconnect"
+msgstr "Odpojit"
+
+msgctxt "#30045"
+msgid "Forget network"
+msgstr "Zapomenout sit"
+
+msgctxt "#30046"
+msgid "Saved Wi-Fi profiles"
+msgstr "Ulozene Wi-Fi profily"
+
+msgctxt "#30047"
+msgid "Forget this saved network?"
+msgstr "Zapomenout tuto ulozenou sit?"
+
+msgctxt "#30048"
+msgid "No saved networks"
+msgstr "Zadne ulozene site"
+
+msgctxt "#30049"
+msgid "Disconnected"
+msgstr "Odpojeno"

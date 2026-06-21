@@ -44,6 +44,13 @@ class HelperServerTests(unittest.TestCase):
             result = client.call("connect_wifi", profile=profile.to_dict())
             self.assertEqual(result["active_service_id"], "wifi-test")
 
+            disconnected = client.call("disconnect", service_id="wifi-test")
+            self.assertIsNone(disconnected["active_service_id"])
+
+            forgotten = client.call("forget_wifi", service_id="wifi-test")
+            forgotten_ap = next(ap for ap in forgotten["access_points"] if ap["service_id"] == "wifi-test")
+            self.assertFalse(forgotten_ap["remembered"])
+
 
 if __name__ == "__main__":
     unittest.main()

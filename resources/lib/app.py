@@ -41,6 +41,7 @@ class MenuItem:
     params: dict[str, str]
     folder: bool = True
     color: str | None = None
+    context_menu: tuple[tuple[str, str, dict[str, str]], ...] = ()
 
 
 class NetworkAssistantApp:
@@ -144,6 +145,13 @@ class NetworkAssistantApp:
         for item in items:
             label = f"[COLOR {item.color}]{item.label}[/COLOR]" if item.color else item.label
             list_item = xbmcgui.ListItem(label=label)
+            if item.context_menu:
+                list_item.addContextMenuItems(
+                    [
+                        (menu_label, f"RunPlugin({self._url(menu_action, **menu_params)})")
+                        for menu_label, menu_action, menu_params in item.context_menu
+                    ]
+                )
             xbmcplugin.addDirectoryItem(
                 self.handle,
                 self._url(item.action, **item.params),
@@ -180,6 +188,15 @@ class NetworkAssistantApp:
         if action == "connect":
             self.connect_wifi()
             return
+        if action == "disconnect_wifi":
+            self.disconnect_wifi()
+            return
+        if action == "forget_wifi":
+            self.forget_wifi()
+            return
+        if action == "wifi_profiles":
+            self.show_wifi_profiles()
+            return
         if action == "toggle_interface":
             self.toggle_interface()
             return
@@ -199,6 +216,7 @@ class NetworkAssistantApp:
         snapshot = self._snapshot()
         items = [
             MenuItem(self._label(30007, "Wi-Fi networks"), "wifi", {}, True),
+            MenuItem(self._label(30046, "Saved Wi-Fi profiles"), "wifi_profiles", {}, True),
             MenuItem(self._label(30008, "Interfaces"), "interfaces", {}, True),
             MenuItem(self._label(30009, "Status"), "status", {}, False),
             MenuItem(self._label(30034, "Install / repair system integration"), "install_system", {}, False),
@@ -273,6 +291,15 @@ class NetworkAssistantApp:
                 if access_point.security:
                     label_bits.append("secured")
                 color = "green" if access_point.connected else "yellow" if access_point.remembered else None
+                context_menu = []
+                if access_point.connected:
+                    context_menu.append(
+                        (self._label(30044, "Disconnect"), "disconnect_wifi", {"service_id": access_point.service_id})
+                    )
+                if access_point.remembered:
+                    context_menu.append(
+                        (self._label(30045, "Forget network"), "forget_wifi", {"service_id": access_point.service_id})
+                    )
                 items.append(
                     MenuItem(
                         "  ".join(label_bits),
@@ -280,6 +307,7 @@ class NetworkAssistantApp:
                         {"service_id": access_point.service_id},
                         False,
                         color,
+                        tuple(context_menu),
                     )
                 )
 
@@ -387,6 +415,74 @@ class NetworkAssistantApp:
 
         self._refresh_container()
         self.show_wifi()
+
+    def disconnect_wifi(self) -> None:
+        service_id = self._param("service_id")
+        if not service_id:
+            self.show_wifi()
+            return
+
+        try:
+            self.backend.disconnect(service_id)
+            self._notify(self._label(30009, "Status"), self._label(30049, "Disconnected"))
+        except (BackendUnavailableError, Exception) as exc:
+            self._notify(self._label(30009, "Status"), str(exc), level="error")
+
+        self._refresh_container()
+        self.show_wifi()
+
+    def forget_wifi(self) -> None:
+        service_id = self._param("service_id")
+        if not service_id:
+            self.show_wifi()
+            return
+
+        dialog = xbmcgui.Dialog()
+        if not dialog.yesno(self._label(30045, "Forget network"), self._label(30047, "Forget this saved network?")):
+            self.show_wifi()
+            return
+
+        try:
+            self.backend.forget_wifi(service_id)
+        except (BackendUnavailableError, Exception) as exc:
+            self._notify(self._label(30009, "Status"), str(exc), level="error")
+
+        self._refresh_container()
+        self.show_wifi()
+
+    def show_wifi_profiles(self) -> None:
+        snapshot = self._snapshot()
+        items: list[MenuItem] = []
+        saved = [item for item in snapshot.access_points if item.remembered]
+
+        if not saved:
+            items.append(MenuItem(self._label(30048, "No saved networks"), "root", {}, False))
+        else:
+            for access_point in saved:
+                label_bits = [self._ssid_label(access_point.ssid)]
+                if access_point.connected:
+                    label_bits.append(self._label(30015, "Connected"))
+                color = "green" if access_point.connected else "yellow"
+                context_menu = []
+                if access_point.connected:
+                    context_menu.append(
+                        (self._label(30044, "Disconnect"), "disconnect_wifi", {"service_id": access_point.service_id})
+                    )
+                context_menu.append(
+                    (self._label(30045, "Forget network"), "forget_wifi", {"service_id": access_point.service_id})
+                )
+                items.append(
+                    MenuItem(
+                        "  ".join(label_bits),
+                        "connect",
+                        {"service_id": access_point.service_id},
+                        False,
+                        color,
+                        tuple(context_menu),
+                    )
+                )
+
+        self._render(self._label(30046, "Saved Wi-Fi profiles"), items)
 
     def toggle_interface(self) -> None:
         kind = self._param("kind")

@@ -147,3 +147,27 @@ msgstr "The add-on will install the helper service and required system files."
 msgctxt "#30043"
 msgid "Hidden network"
 msgstr "Hidden network"
+
+msgctxt "#30044"
+msgid "Disconnect"
+msgstr "Disconnect"
+
+msgctxt "#30045"
+msgid "Forget network"
+msgstr "Forget network"
+
+msgctxt "#30046"
+msgid "Saved Wi-Fi profiles"
+msgstr "Saved Wi-Fi profiles"
+
+msgctxt "#30047"
+msgid "Forget this saved network?"
+msgstr "Forget this saved network?"
+
+msgctxt "#30048"
+msgid "No saved networks"
+msgstr "No saved networks"
+
+msgctxt "#30049"
+msgid "Disconnected"
+msgstr "Disconnected"

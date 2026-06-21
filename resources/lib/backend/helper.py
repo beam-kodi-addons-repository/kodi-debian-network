@@ -45,3 +45,7 @@ class HelperBackend(NetworkBackend):
     def disconnect(self, service_id: str) -> NetworkSnapshot:
         payload = self._client.call("disconnect", service_id=service_id)
         return NetworkSnapshot.from_dict(payload)
+
+    def forget_wifi(self, service_id: str) -> NetworkSnapshot:
+        payload = self._client.call("forget_wifi", service_id=service_id)
+        return NetworkSnapshot.from_dict(payload)

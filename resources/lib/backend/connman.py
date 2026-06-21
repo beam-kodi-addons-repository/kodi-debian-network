@@ -502,3 +502,7 @@ class ConnManBackend(NetworkBackend):
     def disconnect(self, service_id: str) -> NetworkSnapshot:
         self._run("disconnect", service_id)
         return self.snapshot()
+
+    def forget_wifi(self, service_id: str) -> NetworkSnapshot:
+        self._run("config", service_id, "--remove")
+        return self.snapshot()

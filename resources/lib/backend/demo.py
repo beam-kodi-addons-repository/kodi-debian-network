@@ -176,3 +176,15 @@ class DemoBackend(NetworkBackend):
             wlan = self._interfaces["wlan0"]
             self._interfaces["wlan0"] = replace(wlan, connected=False)
         return self._snapshot(message=f"Disconnected from {service_id}")
+
+    def forget_wifi(self, service_id: str) -> NetworkSnapshot:
+        self._profiles.pop(service_id, None)
+        if service_id in self._access_points:
+            self._access_points[service_id] = replace(
+                self._access_points[service_id], connected=False, remembered=False, autoconnect=False
+            )
+        if self._active_service_id == service_id:
+            self._active_service_id = None
+            wlan = self._interfaces["wlan0"]
+            self._interfaces["wlan0"] = replace(wlan, connected=False)
+        return self._snapshot(message=f"Forgot {service_id}")

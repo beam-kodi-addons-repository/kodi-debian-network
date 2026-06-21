@@ -74,6 +74,10 @@ def dispatch_request(backend: Any, payload: Mapping[str, Any]) -> dict[str, Any]
         snapshot = backend.disconnect(str(request.params.get("service_id", "")))
         return RpcResponse.success(snapshot.to_dict(), request.request_id).to_dict()
 
+    if request.method == "forget_wifi":
+        snapshot = backend.forget_wifi(str(request.params.get("service_id", "")))
+        return RpcResponse.success(snapshot.to_dict(), request.request_id).to_dict()
+
     raise BackendUnavailableError(f"Unsupported helper method: {request.method}")
 
 

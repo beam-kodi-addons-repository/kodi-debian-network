@@ -38,3 +38,7 @@ class NetworkBackend(ABC):
     @abstractmethod
     def disconnect(self, service_id: str) -> NetworkSnapshot:
         raise NotImplementedError
+
+    @abstractmethod
+    def forget_wifi(self, service_id: str) -> NetworkSnapshot:
+        raise NotImplementedError
