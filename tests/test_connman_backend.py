@@ -6,8 +6,11 @@ from unittest import mock
 
 from resources.lib.backend.connman import (
     ConnManBackend,
+    ServiceEntry,
     build_interactive_connect_script,
     extract_connman_error,
+    netmask_to_prefix_length,
+    parse_service_detail_output,
     parse_services_output,
     parse_technologies_output,
     prefix_length_to_netmask,
@@ -61,6 +64,22 @@ SERVICES_OUTPUT = """*AO Home Network            wifi_aa:bb:cc:dd:ee:ff_486f6d65
 """
 
 
+SERVICE_DETAIL_OUTPUT = """/net/connman/service/ethernet_b827eb1cd54c_cable
+  Type = ethernet
+  Security = [  ]
+  State = online
+  Favorite = True
+  Immutable = False
+  AutoConnect = True
+  Name = Wired
+  Ethernet = [ Method=auto, Interface=eth0, Address=B8:27:EB:1C:D5:4C, MTU=1500 ]
+  IPv4 = [ Method=dhcp, Address=10.188.35.25, Netmask=255.255.255.0, Gateway=10.188.35.1 ]
+  IPv4.Configuration = [ Method=dhcp ]
+  IPv6 = [  ]
+  Nameservers = [ 10.188.35.1 ]
+"""
+
+
 class ConnManParserTests(unittest.TestCase):
     def test_parse_technologies_output(self) -> None:
         technologies = parse_technologies_output(TECHNOLOGIES_OUTPUT)
@@ -83,6 +102,33 @@ class ConnManParserTests(unittest.TestCase):
     def test_prefix_length_to_netmask(self) -> None:
         self.assertEqual(prefix_length_to_netmask(24), "255.255.255.0")
         self.assertEqual(prefix_length_to_netmask(16), "255.255.0.0")
+
+    def test_netmask_to_prefix_length_roundtrip(self) -> None:
+        self.assertEqual(netmask_to_prefix_length("255.255.255.0"), 24)
+        self.assertEqual(netmask_to_prefix_length(prefix_length_to_netmask(16)), 16)
+
+    def test_parse_service_detail_output_live_sample(self) -> None:
+        detail = parse_service_detail_output("ethernet_b827eb1cd54c_cable", SERVICE_DETAIL_OUTPUT)
+
+        self.assertEqual(detail.address, "10.188.35.25")
+        self.assertEqual(detail.prefix_length, 24)
+        self.assertEqual(detail.gateway, "10.188.35.1")
+        self.assertEqual(detail.nameservers, ("10.188.35.1",))
+        self.assertEqual(detail.ipv4_method, "dhcp")
+
+    def test_favorite_only_service_is_remembered_but_not_connected(self) -> None:
+        # "*" means Favorite (saved), not currently connected -- that's "R"/"O".
+        # Reproduces a live bug where a merely-saved network was shown as
+        # "connected" in the UI.
+        services = parse_services_output("*   SSID Beam            wifi_aa_53534944204265616d_psk\n")
+
+        self.assertFalse(services[0].connected)
+        self.assertTrue(services[0].remembered)
+
+    def test_ready_service_is_connected(self) -> None:
+        services = parse_services_output("  R Some Network         wifi_aa_536f6d65_psk\n")
+
+        self.assertTrue(services[0].connected)
 
     def test_build_interactive_connect_script(self) -> None:
         script = build_interactive_connect_script("wifi_test_psk", "secret")
@@ -115,6 +161,46 @@ class ConnManRunErrorDetectionTests(unittest.TestCase):
             result = backend._run("services")
 
         self.assertEqual(result, SERVICES_OUTPUT)
+
+
+class ConnManSnapshotIpv4Tests(unittest.TestCase):
+    def test_ipv4_for_kind_populates_real_address_for_connected_service(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="ethernet_b827eb1cd54c_cable",
+                name="Wired",
+                kind=InterfaceKind.ETHERNET,
+                flags="*AO",
+                security=(),
+            ),
+        )
+        with mock.patch.object(backend, "_service_detail") as detail_mock:
+            detail_mock.return_value = parse_service_detail_output(
+                "ethernet_b827eb1cd54c_cable", SERVICE_DETAIL_OUTPUT
+            )
+            ipv4 = backend._ipv4_for_kind(InterfaceKind.ETHERNET, services)
+
+        self.assertEqual(ipv4.address, "10.188.35.25")
+        self.assertEqual(ipv4.prefix_length, 24)
+        self.assertEqual(ipv4.gateway, "10.188.35.1")
+        self.assertEqual(ipv4.dns_servers, ("10.188.35.1",))
+
+    def test_ipv4_for_kind_returns_empty_dhcp_when_not_connected(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="ethernet_b827eb1cd54c_cable",
+                name="Wired",
+                kind=InterfaceKind.ETHERNET,
+                flags="",
+                security=(),
+            ),
+        )
+        ipv4 = backend._ipv4_for_kind(InterfaceKind.ETHERNET, services)
+
+        self.assertEqual(ipv4.mode, IPv4Mode.DHCP)
+        self.assertIsNone(ipv4.address)
 
 
 class ConnManPromptDriverTests(unittest.TestCase):

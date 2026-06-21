@@ -210,6 +210,14 @@ class NetworkAssistantApp:
                 lines.append(
                     f"- {interface.name} ({interface.kind.value}): {self._state_word(interface.enabled)}{suffix}"
                 )
+                if interface.mac_address:
+                    lines.append(f"    MAC: {interface.mac_address}")
+                if interface.connected and interface.ipv4.address:
+                    lines.append(f"    IPv4: {interface.ipv4.address}/{interface.ipv4.prefix_length or '?'}")
+                    if interface.ipv4.gateway:
+                        lines.append(f"    Gateway: {interface.ipv4.gateway}")
+                if interface.ipv4.dns_servers:
+                    lines.append(f"    DNS: {', '.join(interface.ipv4.dns_servers)}")
         if snapshot.access_points:
             lines.append("")
             lines.append(self._label(30007, "Wi-Fi networks"))

@@ -18,6 +18,9 @@ SERVICE_LINE_RE = re.compile(r"^(?P<left>.+?)\s{2,}(?P<service_id>(?:wifi|ethern
 CONNMAN_ERROR_RE = re.compile(r"\bError\b.*", re.IGNORECASE)
 PASSPHRASE_PROMPT_RE = re.compile(r"Passphrase\?", re.IGNORECASE)
 RETRY_PROMPT_RE = re.compile(r"Retry\s*\(yes/no\)\?", re.IGNORECASE)
+IPV4_LINE_RE = re.compile(r"^IPv4\s*=\s*\[(.*)\]\s*$")
+NAMESERVERS_LINE_RE = re.compile(r"^Nameservers\s*=\s*\[(.*)\]\s*$")
+IPV4_FIELD_RE = re.compile(r"(\w+)=([^,\]]+)")
 
 
 @dataclass(frozen=True)
@@ -39,7 +42,11 @@ class ServiceEntry:
 
     @property
     def connected(self) -> bool:
-        return "*" in self.flags
+        # connmanctl's leading flags are Favorite("*"), AutoConnect("A"), and
+        # the current state mapped to Ready("R") or Online("O"). "*" only
+        # means the service is saved/favorite, not that it's actually
+        # associated right now -- that's "R"/"O".
+        return "R" in self.flags or "O" in self.flags
 
     @property
     def autoconnect(self) -> bool:
@@ -47,7 +54,23 @@ class ServiceEntry:
 
     @property
     def remembered(self) -> bool:
-        return self.connected or self.autoconnect
+        return "*" in self.flags or self.autoconnect
+
+
+@dataclass(frozen=True)
+class ServiceDetail:
+    service_id: str
+    ipv4_method: str | None
+    address: str | None
+    netmask: str | None
+    gateway: str | None
+    nameservers: tuple[str, ...]
+
+    @property
+    def prefix_length(self) -> int | None:
+        if not self.netmask:
+            return None
+        return netmask_to_prefix_length(self.netmask)
 
 
 def prefix_length_to_netmask(prefix_length: int) -> str:
@@ -55,6 +78,37 @@ def prefix_length_to_netmask(prefix_length: int) -> str:
         raise ValueError(f"Invalid prefix length: {prefix_length}")
     network = ipaddress.IPv4Network(f"0.0.0.0/{prefix_length}")
     return str(network.netmask)
+
+
+def netmask_to_prefix_length(netmask: str) -> int:
+    return ipaddress.IPv4Network(f"0.0.0.0/{netmask}").prefixlen
+
+
+def parse_service_detail_output(service_id: str, output: str) -> ServiceDetail:
+    ipv4_fields: dict[str, str] = {}
+    nameservers: tuple[str, ...] = ()
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        ipv4_match = IPV4_LINE_RE.match(line)
+        if ipv4_match:
+            ipv4_fields = {
+                key: value.strip()
+                for key, value in IPV4_FIELD_RE.findall(ipv4_match.group(1))
+            }
+            continue
+        ns_match = NAMESERVERS_LINE_RE.match(line)
+        if ns_match:
+            nameservers = tuple(
+                part.strip() for part in ns_match.group(1).split(",") if part.strip()
+            )
+    return ServiceDetail(
+        service_id=service_id,
+        ipv4_method=ipv4_fields.get("Method", "").lower() or None,
+        address=ipv4_fields.get("Address") or None,
+        netmask=ipv4_fields.get("Netmask") or None,
+        gateway=ipv4_fields.get("Gateway") or None,
+        nameservers=nameservers,
+    )
 
 
 def parse_technologies_output(output: str) -> dict[InterfaceKind, TechnologyStatus]:
@@ -109,12 +163,13 @@ def _security_from_service_id(service_id: str) -> tuple[str, ...]:
 
 
 def _service_label_and_flags(left: str) -> tuple[str, str]:
-    if left[:1].isspace():
-        return left.strip(), ""
-    match = re.match(r"^(?P<flags>[*A-Z]+)\s+(?P<label>.+)$", left)
-    if not match:
-        return left.strip(), ""
-    return match.group("label").strip(), match.group("flags")
+    # connmanctl always prints a fixed 3-character flags column (Favorite,
+    # AutoConnect, State) followed by a separator space, even when individual
+    # flags are absent (rendered as spaces). Slicing by fixed width -- rather
+    # than treating a blank first character as "no flags at all" -- is the
+    # only way to correctly detect a state flag (R/O) on a non-favorite,
+    # non-autoconnect service.
+    return left[4:].strip(), left[:3]
 
 
 def parse_services_output(output: str) -> tuple[ServiceEntry, ...]:
@@ -315,6 +370,30 @@ class ConnManBackend(NetworkBackend):
     def _services(self) -> tuple[ServiceEntry, ...]:
         return parse_services_output(self._run("services"))
 
+    def _service_detail(self, service_id: str) -> ServiceDetail:
+        output = self._run("services", service_id)
+        return parse_service_detail_output(service_id, output)
+
+    def _ipv4_for_kind(self, kind: InterfaceKind, services: tuple[ServiceEntry, ...]) -> IPv4Configuration:
+        connected_entry = next(
+            (entry for entry in services if entry.kind == kind and entry.connected),
+            None,
+        )
+        if connected_entry is None:
+            return IPv4Configuration(mode=IPv4Mode.DHCP)
+        try:
+            detail = self._service_detail(connected_entry.service_id)
+        except BackendUnavailableError:
+            return IPv4Configuration(mode=IPv4Mode.DHCP)
+        mode = IPv4Mode.STATIC if detail.ipv4_method == "manual" else IPv4Mode.DHCP
+        return IPv4Configuration(
+            mode=mode,
+            address=detail.address,
+            prefix_length=detail.prefix_length,
+            gateway=detail.gateway,
+            dns_servers=detail.nameservers,
+        )
+
     def _access_points(self) -> tuple[AccessPoint, ...]:
         entries = [entry for entry in self._services() if entry.kind == InterfaceKind.WIFI]
         count = max(len(entries), 1)
@@ -369,7 +448,7 @@ class ConnManBackend(NetworkBackend):
                     kind=wifi.kind,
                     enabled=wifi.powered,
                     connected=wifi.connected,
-                    ipv4=IPv4Configuration(mode=IPv4Mode.DHCP),
+                    ipv4=self._ipv4_for_kind(InterfaceKind.WIFI, services),
                     mac_address=wifi.mac_address,
                 )
             )
@@ -380,7 +459,7 @@ class ConnManBackend(NetworkBackend):
                     kind=ethernet.kind,
                     enabled=ethernet.powered,
                     connected=ethernet.connected,
-                    ipv4=IPv4Configuration(mode=IPv4Mode.DHCP),
+                    ipv4=self._ipv4_for_kind(InterfaceKind.ETHERNET, services),
                     mac_address=ethernet.mac_address,
                 )
             )
