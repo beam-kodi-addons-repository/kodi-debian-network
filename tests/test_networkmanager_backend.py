@@ -10,9 +10,10 @@ from resources.lib.backend.networkmanager import (
     combine_bands,
     parse_connections_output,
     parse_device_status_output,
-    parse_ipv4_get_values,
+    parse_ip4_address_block,
     parse_wifi_list_output,
     split_terse_fields,
+    unescape_value,
 )
 from resources.lib.backend.base import BackendUnavailableError
 from resources.lib.models import IPv4Configuration, IPv4Mode, InterfaceKind, NetworkProfile
@@ -135,23 +136,28 @@ class ParseWifiListOutputTests(unittest.TestCase):
         self.assertEqual(hidden[0].bssid, "56:eb:f8:19:55:10")
 
 
-class ParseIpv4GetValuesTests(unittest.TestCase):
-    def test_dhcp(self) -> None:
-        method, address, prefix_length, gateway, dns_servers = parse_ipv4_get_values("auto\n\n\n\n")
-        self.assertEqual(method, "auto")
+class ParseIp4AddressBlockTests(unittest.TestCase):
+    def test_blank_block(self) -> None:
+        address, prefix_length, gateway, dns_servers = parse_ip4_address_block("\n\n\n")
         self.assertIsNone(address)
         self.assertIsNone(prefix_length)
         self.assertIsNone(gateway)
         self.assertEqual(dns_servers, ())
 
-    def test_static(self) -> None:
-        output = "manual\n10.0.0.5/24\n10.0.0.1\n1.1.1.1,8.8.8.8\n"
-        method, address, prefix_length, gateway, dns_servers = parse_ipv4_get_values(output)
-        self.assertEqual(method, "manual")
+    def test_address_gateway_and_multiple_dns(self) -> None:
+        output = "10.0.0.5/24\n10.0.0.1\n1.1.1.1,8.8.8.8\n"
+        address, prefix_length, gateway, dns_servers = parse_ip4_address_block(output)
         self.assertEqual(address, "10.0.0.5")
         self.assertEqual(prefix_length, 24)
         self.assertEqual(gateway, "10.0.0.1")
         self.assertEqual(dns_servers, ("1.1.1.1", "8.8.8.8"))
+
+
+class UnescapeValueTests(unittest.TestCase):
+    def test_unescapes_colons_in_a_single_value_read(self) -> None:
+        # `nmcli -g GENERAL.HWADDR device show <iface>` escapes ':' in the
+        # MAC address even though only one field was requested.
+        self.assertEqual(unescape_value(r"2C\:CF\:67\:40\:9F\:94"), "2C:CF:67:40:9F:94")
 
 
 class BandHelperTests(unittest.TestCase):

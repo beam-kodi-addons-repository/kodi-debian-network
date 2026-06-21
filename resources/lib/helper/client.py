@@ -19,11 +19,11 @@ class HelperClient:
         self.socket_path = socket_path
         self.timeout = timeout
 
-    def call(self, method: str, **params: Any) -> Any:
+    def call(self, method: str, timeout: float | None = None, **params: Any) -> Any:
         request = RpcRequest(method=method, params=params)
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(self.timeout)
+                sock.settimeout(timeout if timeout is not None else self.timeout)
                 sock.connect(self.socket_path)
                 sock.sendall(encode_message(request.to_dict()))
                 sock.shutdown(socket.SHUT_WR)

@@ -14,6 +14,17 @@ UNESCAPED_COLON_RE = re.compile(r"(?<!\\):")
 BAND_ORDER = ("2.4GHz", "5GHz", "6GHz")
 
 
+def unescape_value(value: str) -> str:
+    """Undo nmcli's backslash-escaping of ':' and '\\' inside a field value.
+
+    nmcli escapes literal ':' (and '\\') in *every* machine-readable output
+    mode -- not just `-t -f` rows with several fields on one line, but also
+    single-field `-g` reads like `-g GENERAL.HWADDR device show <iface>`,
+    since the same value could in principle be combined with other fields.
+    """
+    return value.replace("\\:", ":").replace("\\\\", "\\")
+
+
 def split_terse_fields(line: str) -> tuple[str, ...]:
     """Split one row of `nmcli -t -f ...` output.
 
@@ -23,7 +34,7 @@ def split_terse_fields(line: str) -> tuple[str, ...]:
     separator.
     """
     raw_parts = UNESCAPED_COLON_RE.split(line)
-    return tuple(part.replace("\\:", ":").replace("\\\\", "\\") for part in raw_parts)
+    return tuple(unescape_value(part) for part in raw_parts)
 
 
 def band_from_frequency(freq_mhz: int) -> str:
@@ -159,16 +170,18 @@ def parse_wifi_list_output(output: str) -> tuple[WifiScanEntry, ...]:
     return tuple(entries)
 
 
-def parse_ipv4_get_values(output: str) -> tuple[str | None, str | None, int | None, str | None, tuple[str, ...]]:
-    """Parse `nmcli -g ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns connection show <id>`.
+def parse_ip4_address_block(output: str) -> tuple[str | None, int | None, str | None, tuple[str, ...]]:
+    """Parse a 3-line `-g ...address-field,...gateway-field,...dns-field` read.
 
-    -g prints one requested field's value per line, in the order requested.
+    Used for both `ipv4.addresses,ipv4.gateway,ipv4.dns connection show <id>`
+    (a saved static profile) and `IP4.ADDRESS,IP4.GATEWAY,IP4.DNS device show
+    <iface>` (the live, currently-assigned configuration) -- both lay out as
+    one requested field's value per line, blank when a field has no value.
     """
-    lines = output.splitlines()
-    method = lines[0].strip() if len(lines) > 0 else ""
-    addresses = lines[1].strip() if len(lines) > 1 else ""
-    gateway = lines[2].strip() if len(lines) > 2 else ""
-    dns = lines[3].strip() if len(lines) > 3 else ""
+    lines = [unescape_value(line.strip()) for line in output.splitlines()]
+    addresses = lines[0] if len(lines) > 0 else ""
+    gateway = lines[1] if len(lines) > 1 else ""
+    dns = lines[2] if len(lines) > 2 else ""
 
     address: str | None = None
     prefix_length: int | None = None
@@ -185,7 +198,7 @@ def parse_ipv4_get_values(output: str) -> tuple[str | None, str | None, int | No
             address = first or None
 
     dns_servers = tuple(part.strip() for part in dns.split(",") if part.strip())
-    return method or None, address, prefix_length, gateway or None, dns_servers
+    return address, prefix_length, gateway or None, dns_servers
 
 
 class NetworkManagerBackend(NetworkBackend):
@@ -253,19 +266,36 @@ class NetworkManagerBackend(NetworkBackend):
             output = self._run("-g", "GENERAL.HWADDR", "device", "show", iface)
         except BackendUnavailableError:
             return None
-        return output.strip() or None
+        return unescape_value(output.strip()) or None
 
-    def _ipv4_for_connection(self, uuid: str | None) -> IPv4Configuration:
+    def _ipv4_for_interface(self, iface: str, uuid: str | None, connected: bool) -> IPv4Configuration:
         if not uuid:
             return IPv4Configuration(mode=IPv4Mode.DHCP)
         try:
-            output = self._run(
-                "-g", "ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns", "connection", "show", uuid
-            )
+            method_output = self._run("-g", "ipv4.method", "connection", "show", uuid)
         except BackendUnavailableError:
             return IPv4Configuration(mode=IPv4Mode.DHCP)
-        method, address, prefix_length, gateway, dns_servers = parse_ipv4_get_values(output)
+        method = unescape_value(method_output.strip())
         mode = IPv4Mode.STATIC if method == "manual" else IPv4Mode.DHCP
+
+        if connected:
+            # The connection profile only stores the *configured* address,
+            # which is blank for DHCP ("auto") profiles -- the actually
+            # assigned address lives on the device instead, so read it live
+            # there whenever the interface is up.
+            try:
+                output = self._run("-g", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS", "device", "show", iface)
+            except BackendUnavailableError:
+                return IPv4Configuration(mode=mode)
+        elif mode is IPv4Mode.STATIC:
+            try:
+                output = self._run("-g", "ipv4.addresses,ipv4.gateway,ipv4.dns", "connection", "show", uuid)
+            except BackendUnavailableError:
+                return IPv4Configuration(mode=mode)
+        else:
+            return IPv4Configuration(mode=mode)
+
+        address, prefix_length, gateway, dns_servers = parse_ip4_address_block(output)
         return IPv4Configuration(
             mode=mode,
             address=address,
@@ -401,13 +431,16 @@ class NetworkManagerBackend(NetworkBackend):
                 (c for c in connections if c.kind is InterfaceKind.WIFI and c.name == wifi_status.connection),
                 None,
             )
+            wifi_connected = wifi_status.state == "connected"
             interfaces.append(
                 InterfaceState(
                     name=wifi_status.device,
                     kind=InterfaceKind.WIFI,
                     enabled=wifi_powered,
-                    connected=wifi_status.state == "connected",
-                    ipv4=self._ipv4_for_connection(connection.uuid if connection else None),
+                    connected=wifi_connected,
+                    ipv4=self._ipv4_for_interface(
+                        wifi_status.device, connection.uuid if connection else None, wifi_connected
+                    ),
                     mac_address=self._hwaddr(wifi_status.device),
                 )
             )
@@ -420,13 +453,16 @@ class NetworkManagerBackend(NetworkBackend):
                 (c for c in connections if c.kind is InterfaceKind.ETHERNET and c.name == ethernet_status.connection),
                 None,
             )
+            ethernet_connected = ethernet_status.state == "connected"
             interfaces.append(
                 InterfaceState(
                     name=ethernet_status.device,
                     kind=InterfaceKind.ETHERNET,
                     enabled=ethernet_enabled,
-                    connected=ethernet_status.state == "connected",
-                    ipv4=self._ipv4_for_connection(connection.uuid if connection else None),
+                    connected=ethernet_connected,
+                    ipv4=self._ipv4_for_interface(
+                        ethernet_status.device, connection.uuid if connection else None, ethernet_connected
+                    ),
                     mac_address=self._hwaddr(ethernet_status.device),
                 )
             )

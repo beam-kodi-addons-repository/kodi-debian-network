@@ -35,7 +35,14 @@ class HelperRequestHandler(socketserver.StreamRequestHandler):
         except Exception as exc:  # pragma: no cover - helper boundary
             response = RpcResponse.failure(str(exc)).to_dict()
 
-        self.wfile.write(encode_message(response))
+        try:
+            self.wfile.write(encode_message(response))
+        except OSError:
+            # The client gave up waiting (e.g. it hit its own timeout) and
+            # closed its end before this slow nmcli-backed call finished --
+            # the backend operation itself already ran to completion, there
+            # is just nobody left to deliver the result to.
+            pass
 
 
 def dispatch_request(backend: Any, payload: Mapping[str, Any]) -> dict[str, Any]:
