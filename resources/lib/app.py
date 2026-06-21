@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - exercised only outside Kodi
     xbmcplugin = None
     xbmcvfs = None
 
+from . import tailscale
 from .backend.base import BackendUnavailableError
 from .backend.factory import build_backend
 from .models import IPv4Configuration, IPv4Mode, NetworkSnapshot, NetworkProfile
@@ -179,6 +180,9 @@ class NetworkAssistantApp:
         if action == "status":
             self.show_status()
             return
+        if action == "tailscale":
+            self.show_tailscale_status()
+            return
         if action == "reload":
             self.reload_backend()
             return
@@ -219,6 +223,10 @@ class NetworkAssistantApp:
             MenuItem(self._label(30046, "Saved Wi-Fi profiles"), "wifi_profiles", {}, True),
             MenuItem(self._label(30008, "Interfaces"), "interfaces", {}, True),
             MenuItem(self._label(30009, "Status"), "status", {}, False),
+        ]
+        if tailscale.is_installed():
+            items.append(MenuItem(self._label(30050, "Tailscale status"), "tailscale", {}, False))
+        items += [
             MenuItem(self._label(30034, "Install / repair system integration"), "install_system", {}, False),
             MenuItem(self._label(30010, "Reload backend"), "reload", {}, False),
         ]
@@ -270,6 +278,37 @@ class NetworkAssistantApp:
             lines.append("")
             lines.append(f"[COLOR red]{snapshot.message}[/COLOR]")
         self._show_text(self._label(30009, "Status"), "\n".join(lines))
+        self.show_root()
+
+    def show_tailscale_status(self) -> None:
+        status = tailscale.get_status()
+        lines = [
+            f"{self._label(30028, 'Backend')}: {self._label(30051, 'Tailscale')}",
+            f"{self._label(30052, 'Daemon state')}: {status.backend_state or self._state_word(status.running)}",
+        ]
+        if status.peers:
+            lines.append("")
+            for peer in status.peers:
+                color = "green" if peer.online else "red"
+                hostname = peer.hostname or self._label(30043, "Hidden network")
+                if peer.is_self:
+                    hostname = f"{hostname} ({self._label(30053, 'this device')})"
+                ip = ", ".join(peer.ips) or "-"
+                state = self._label(30054, "Online") if peer.online else self._label(30055, "Offline")
+                if peer.exit_node:
+                    state = f"{state}, {self._label(30056, 'exit node')}"
+                elif peer.exit_node_option:
+                    state = f"{state}, {self._label(30057, 'offers exit node')}"
+                lines.append(f"- [COLOR {color}]{hostname}  {ip}  {state}[/COLOR]")
+        if status.health:
+            lines.append("")
+            lines.append(self._label(30058, "Health"))
+            for warning in status.health:
+                lines.append(f"[COLOR red]- {warning}[/COLOR]")
+        if status.message:
+            lines.append("")
+            lines.append(f"[COLOR red]{status.message}[/COLOR]")
+        self._show_text(self._label(30050, "Tailscale status"), "\n".join(lines))
         self.show_root()
 
     def show_wifi(self) -> None:

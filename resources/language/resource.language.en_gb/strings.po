@@ -171,3 +171,39 @@ msgstr "No saved networks"
 msgctxt "#30049"
 msgid "Disconnected"
 msgstr "Disconnected"
+
+msgctxt "#30050"
+msgid "Tailscale status"
+msgstr "Tailscale status"
+
+msgctxt "#30051"
+msgid "Tailscale"
+msgstr "Tailscale"
+
+msgctxt "#30052"
+msgid "Daemon state"
+msgstr "Daemon state"
+
+msgctxt "#30053"
+msgid "this device"
+msgstr "this device"
+
+msgctxt "#30054"
+msgid "Online"
+msgstr "Online"
+
+msgctxt "#30055"
+msgid "Offline"
+msgstr "Offline"
+
+msgctxt "#30056"
+msgid "exit node"
+msgstr "exit node"
+
+msgctxt "#30057"
+msgid "offers exit node"
+msgstr "offers exit node"
+
+msgctxt "#30058"
+msgid "Health"
+msgstr "Health"
