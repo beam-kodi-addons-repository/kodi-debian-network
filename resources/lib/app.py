@@ -253,8 +253,8 @@ class NetworkAssistantApp:
                     lines.append(f"    IPv4: {interface.ipv4.address}/{interface.ipv4.prefix_length or '?'}")
                     if interface.ipv4.gateway:
                         lines.append(f"    Gateway: {interface.ipv4.gateway}")
-                if interface.ipv4.dns_servers:
-                    lines.append(f"    DNS: {', '.join(interface.ipv4.dns_servers)}")
+                    if interface.ipv4.dns_servers:
+                        lines.append(f"    DNS: {', '.join(interface.ipv4.dns_servers)}")
         if snapshot.access_points:
             lines.append("")
             lines.append(self._label(30007, "Wi-Fi networks"))
@@ -262,7 +262,10 @@ class NetworkAssistantApp:
                 state = "connected" if access_point.connected else "saved" if access_point.remembered else "available"
                 color = "green" if access_point.connected else "yellow" if access_point.remembered else "white"
                 name = self._ssid_label(access_point.ssid)
-                lines.append(f"- [COLOR {color}]{name} [{access_point.signal}%] {state}[/COLOR]")
+                if not access_point.ssid and access_point.bssid:
+                    name = f"{name} ({access_point.bssid})"
+                security = f" {access_point.security_label}" if access_point.security_label else ""
+                lines.append(f"- [COLOR {color}]{name} [{access_point.signal}%]{security} {state}[/COLOR]")
         if snapshot.message:
             lines.append("")
             lines.append(f"[COLOR red]{snapshot.message}[/COLOR]")
@@ -283,12 +286,17 @@ class NetworkAssistantApp:
             items.append(MenuItem(self._label(30026, "No Wi-Fi networks found"), "root", {}, False))
         else:
             for access_point in access_points:
-                label_bits = [self._ssid_label(access_point.ssid), f"{access_point.signal}%"]
+                name = self._ssid_label(access_point.ssid)
+                if not access_point.ssid and access_point.bssid:
+                    name = f"{name} ({access_point.bssid})"
+                label_bits = [name, f"{access_point.signal}%"]
                 if access_point.connected:
                     label_bits.append(self._label(30015, "Connected"))
                 elif access_point.remembered:
                     label_bits.append("saved")
-                if access_point.security:
+                if access_point.security_label:
+                    label_bits.append(access_point.security_label)
+                elif access_point.security:
                     label_bits.append("secured")
                 color = "green" if access_point.connected else "yellow" if access_point.remembered else None
                 context_menu = []

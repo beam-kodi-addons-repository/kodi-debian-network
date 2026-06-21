@@ -21,6 +21,11 @@ RETRY_PROMPT_RE = re.compile(r"Retry\s*\(yes/no\)\?", re.IGNORECASE)
 IPV4_LINE_RE = re.compile(r"^IPv4\s*=\s*\[(.*)\]\s*$")
 NAMESERVERS_LINE_RE = re.compile(r"^Nameservers\s*=\s*\[(.*)\]\s*$")
 IPV4_FIELD_RE = re.compile(r"(\w+)=([^,\]]+)")
+IW_BSS_HEADER_RE = re.compile(r"^BSS (?P<bssid>[0-9a-fA-F:]{17})\(on", re.MULTILINE)
+IW_SSID_LINE_RE = re.compile(r"^\tSSID: (?P<ssid>.*)$", re.MULTILINE)
+IW_CAPABILITY_LINE_RE = re.compile(r"^\tcapability: (?P<cap>.*)$", re.MULTILINE)
+IW_AUTH_SUITES_RE = re.compile(r"Authentication suites:\s*(?P<suites>.+)$", re.MULTILINE)
+IW_INTERFACE_RE = re.compile(r"^\tInterface (?P<name>\S+)$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,60 @@ def parse_service_detail_output(service_id: str, output: str) -> ServiceDetail:
         gateway=ipv4_fields.get("Gateway") or None,
         nameservers=nameservers,
     )
+
+
+@dataclass(frozen=True)
+class ScanEntry:
+    bssid: str
+    ssid: str
+    security_label: str
+
+
+def classify_wifi_security(block: str) -> str:
+    has_rsn = re.search(r"^\tRSN:", block, re.MULTILINE) is not None
+    has_wpa = re.search(r"^\tWPA:", block, re.MULTILINE) is not None
+    suites = " ".join(IW_AUTH_SUITES_RE.findall(block))
+    has_psk = "PSK" in suites
+    has_sae = "SAE" in suites
+    has_eap = "802.1X" in suites or "EAP" in suites
+
+    if has_rsn and has_psk and has_sae:
+        return "WPA2/WPA3"
+    if has_rsn and has_sae:
+        return "WPA3"
+    if has_rsn and has_eap:
+        return "WPA/WPA2-Enterprise" if has_wpa else "WPA2-Enterprise"
+    if has_rsn and has_psk:
+        return "WPA/WPA2" if has_wpa else "WPA2"
+    if has_wpa:
+        return "WPA"
+    capability_match = IW_CAPABILITY_LINE_RE.search(block)
+    if capability_match and "Privacy" in capability_match.group("cap"):
+        return "WEP"
+    return "Open"
+
+
+def parse_iw_scan_output(output: str) -> tuple[ScanEntry, ...]:
+    entries: list[ScanEntry] = []
+    matches = list(IW_BSS_HEADER_RE.finditer(output))
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(output)
+        block = output[start:end]
+        ssid_match = IW_SSID_LINE_RE.search(block)
+        entries.append(
+            ScanEntry(
+                bssid=match.group("bssid").lower(),
+                ssid=ssid_match.group("ssid") if ssid_match else "",
+                security_label=classify_wifi_security(block),
+            )
+        )
+    return tuple(entries)
+
+
+def parse_iw_dev_interface(output: str) -> str | None:
+    match = IW_INTERFACE_RE.search(output)
+    return match.group("name") if match else None
 
 
 def parse_technologies_output(output: str) -> dict[InterfaceKind, TechnologyStatus]:
@@ -394,12 +453,61 @@ class ConnManBackend(NetworkBackend):
             dns_servers=detail.nameservers,
         )
 
+    def _wifi_interface_name(self) -> str | None:
+        if not shutil.which("iw"):
+            return None
+        try:
+            completed = subprocess.run(["iw", "dev"], capture_output=True, text=True, check=False, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        return parse_iw_dev_interface(completed.stdout)
+
+    def _scan_entries(self) -> tuple[ScanEntry, ...]:
+        # Best-effort enrichment only (real WPA/WPA2/WPA3 security label and
+        # BSSID, which connmanctl itself doesn't expose). Reads the kernel's
+        # already-cached scan results ("scan dump") rather than triggering a
+        # fresh active scan, so it can't contend with ConnMan's own scanning
+        # or add latency; any failure here must never break the WiFi list.
+        iface = self._wifi_interface_name()
+        if not iface:
+            return ()
+        try:
+            completed = subprocess.run(
+                ["iw", "dev", iface, "scan", "dump"], capture_output=True, text=True, check=False, timeout=5
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return ()
+        if completed.returncode != 0:
+            return ()
+        return parse_iw_scan_output(completed.stdout)
+
     def _access_points(self) -> tuple[AccessPoint, ...]:
         entries = [entry for entry in self._services() if entry.kind == InterfaceKind.WIFI]
         count = max(len(entries), 1)
+
+        scan_by_ssid: dict[str, ScanEntry] = {}
+        hidden_scan_entries: list[ScanEntry] = []
+        for scan_entry in self._scan_entries():
+            if scan_entry.ssid:
+                scan_by_ssid.setdefault(scan_entry.ssid, scan_entry)
+            else:
+                hidden_scan_entries.append(scan_entry)
+
         access_points: list[AccessPoint] = []
         for index, entry in enumerate(entries):
             signal = max(10, 100 - int(index * (80 / count)))
+            security_label: str | None = None
+            bssid: str | None = None
+            if entry.name:
+                scan_match = scan_by_ssid.get(entry.name)
+                if scan_match:
+                    security_label = scan_match.security_label
+                    bssid = scan_match.bssid
+            elif hidden_scan_entries:
+                security_label = hidden_scan_entries[0].security_label
+                bssid = ", ".join(sorted({item.bssid for item in hidden_scan_entries}))
             access_points.append(
                 AccessPoint(
                     service_id=entry.service_id,
@@ -409,6 +517,8 @@ class ConnManBackend(NetworkBackend):
                     connected=entry.connected,
                     remembered=entry.remembered,
                     autoconnect=entry.autoconnect,
+                    security_label=security_label,
+                    bssid=bssid,
                 )
             )
         return tuple(access_points)

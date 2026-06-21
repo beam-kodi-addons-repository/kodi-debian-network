@@ -66,6 +66,8 @@ class AccessPoint:
     connected: bool = False
     remembered: bool = False
     autoconnect: bool = False
+    security_label: str | None = None
+    bssid: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +78,8 @@ class AccessPoint:
             "connected": self.connected,
             "remembered": self.remembered,
             "autoconnect": self.autoconnect,
+            "security_label": self.security_label,
+            "bssid": self.bssid,
         }
 
     @classmethod
@@ -88,6 +92,8 @@ class AccessPoint:
             connected=bool(data.get("connected", False)),
             remembered=bool(data.get("remembered", False)),
             autoconnect=bool(data.get("autoconnect", False)),
+            security_label=data.get("security_label") or None,
+            bssid=data.get("bssid") or None,
         )
 
 

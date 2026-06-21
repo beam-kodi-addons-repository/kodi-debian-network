@@ -8,8 +8,11 @@ from resources.lib.backend.connman import (
     ConnManBackend,
     ServiceEntry,
     build_interactive_connect_script,
+    classify_wifi_security,
     extract_connman_error,
     netmask_to_prefix_length,
+    parse_iw_dev_interface,
+    parse_iw_scan_output,
     parse_service_detail_output,
     parse_services_output,
     parse_technologies_output,
@@ -17,30 +20,6 @@ from resources.lib.backend.connman import (
 )
 from resources.lib.backend.base import BackendUnavailableError
 from resources.lib.models import IPv4Configuration, IPv4Mode, InterfaceKind, NetworkProfile, NetworkSnapshot
-
-
-class FakeInteractiveIO:
-    """Feeds canned connmanctl output chunks to `_run_prompt_driver` and
-    records the lines written back, without touching real subprocess/pty IO.
-    """
-
-    def __init__(self, chunks: list[str]) -> None:
-        self._chunks = iter(chunks)
-        self.written_lines: list[str] = []
-        self.finished = False
-
-    def write_line(self, line: str) -> None:
-        self.written_lines.append(line)
-
-    def read_chunk(self) -> str:
-        try:
-            return next(self._chunks)
-        except StopIteration:
-            self.finished = True
-            return ""
-
-    def is_finished(self) -> bool:
-        return self.finished
 
 
 TECHNOLOGIES_OUTPUT = """/net/connman/technology/wifi
@@ -80,6 +59,66 @@ SERVICE_DETAIL_OUTPUT = """/net/connman/service/ethernet_b827eb1cd54c_cable
 """
 
 
+IW_DEV_OUTPUT = """phy#0
+\tUnnamed/non-netdev interface
+\t\twdev 0x5
+\t\taddr ba:27:eb:49:80:19
+\t\ttype P2P-device
+\tInterface wlan0
+\t\tifindex 3
+\t\twdev 0x1
+\t\taddr b8:27:eb:49:80:19
+\t\ttype managed
+"""
+
+
+IW_SCAN_OUTPUT = """BSS 50:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tSSID: SSID Beam
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK FT/PSK PSK/SHA-256 SAE FT/SAE
+BSS 52:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tSSID: Beam
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK FT/PSK PSK/SHA-256 SAE FT/SAE
+BSS 56:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK
+"""
+
+
+class FakeInteractiveIO:
+    """Feeds canned connmanctl output chunks to `_run_prompt_driver` and
+    records the lines written back, without touching real subprocess/pty IO.
+    """
+
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = iter(chunks)
+        self.written_lines: list[str] = []
+        self.finished = False
+
+    def write_line(self, line: str) -> None:
+        self.written_lines.append(line)
+
+    def read_chunk(self) -> str:
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            self.finished = True
+            return ""
+
+    def is_finished(self) -> bool:
+        return self.finished
+
+
 class ConnManParserTests(unittest.TestCase):
     def test_parse_technologies_output(self) -> None:
         technologies = parse_technologies_output(TECHNOLOGIES_OUTPUT)
@@ -99,23 +138,6 @@ class ConnManParserTests(unittest.TestCase):
         self.assertEqual(services[0].security, ("psk",))
         self.assertEqual(services[2].kind, InterfaceKind.ETHERNET)
 
-    def test_prefix_length_to_netmask(self) -> None:
-        self.assertEqual(prefix_length_to_netmask(24), "255.255.255.0")
-        self.assertEqual(prefix_length_to_netmask(16), "255.255.0.0")
-
-    def test_netmask_to_prefix_length_roundtrip(self) -> None:
-        self.assertEqual(netmask_to_prefix_length("255.255.255.0"), 24)
-        self.assertEqual(netmask_to_prefix_length(prefix_length_to_netmask(16)), 16)
-
-    def test_parse_service_detail_output_live_sample(self) -> None:
-        detail = parse_service_detail_output("ethernet_b827eb1cd54c_cable", SERVICE_DETAIL_OUTPUT)
-
-        self.assertEqual(detail.address, "10.188.35.25")
-        self.assertEqual(detail.prefix_length, 24)
-        self.assertEqual(detail.gateway, "10.188.35.1")
-        self.assertEqual(detail.nameservers, ("10.188.35.1",))
-        self.assertEqual(detail.ipv4_method, "dhcp")
-
     def test_favorite_only_service_is_remembered_but_not_connected(self) -> None:
         # "*" means Favorite (saved), not currently connected -- that's "R"/"O".
         # Reproduces a live bug where a merely-saved network was shown as
@@ -130,6 +152,14 @@ class ConnManParserTests(unittest.TestCase):
 
         self.assertTrue(services[0].connected)
 
+    def test_prefix_length_to_netmask(self) -> None:
+        self.assertEqual(prefix_length_to_netmask(24), "255.255.255.0")
+        self.assertEqual(prefix_length_to_netmask(16), "255.255.0.0")
+
+    def test_netmask_to_prefix_length_roundtrip(self) -> None:
+        self.assertEqual(netmask_to_prefix_length("255.255.255.0"), 24)
+        self.assertEqual(netmask_to_prefix_length(prefix_length_to_netmask(16)), 16)
+
     def test_build_interactive_connect_script(self) -> None:
         script = build_interactive_connect_script("wifi_test_psk", "secret")
 
@@ -138,6 +168,45 @@ class ConnManParserTests(unittest.TestCase):
     def test_extract_connman_error(self) -> None:
         output = "Agent registered\nError /net/connman/service/test: invalid-key\n"
         self.assertEqual(extract_connman_error(output), "Error /net/connman/service/test: invalid-key")
+
+    def test_parse_service_detail_output_live_sample(self) -> None:
+        detail = parse_service_detail_output("ethernet_b827eb1cd54c_cable", SERVICE_DETAIL_OUTPUT)
+
+        self.assertEqual(detail.address, "10.188.35.25")
+        self.assertEqual(detail.prefix_length, 24)
+        self.assertEqual(detail.gateway, "10.188.35.1")
+        self.assertEqual(detail.nameservers, ("10.188.35.1",))
+        self.assertEqual(detail.ipv4_method, "dhcp")
+
+    def test_parse_iw_dev_interface(self) -> None:
+        self.assertEqual(parse_iw_dev_interface(IW_DEV_OUTPUT), "wlan0")
+
+    def test_parse_iw_scan_output_live_sample(self) -> None:
+        entries = parse_iw_scan_output(IW_SCAN_OUTPUT)
+
+        self.assertEqual(len(entries), 3)
+        by_bssid = {entry.bssid: entry for entry in entries}
+
+        # "SSID Beam" and "Beam" both advertise PSK *and* SAE -- a WPA2/WPA3
+        # transition-mode network -- the exact live config that broke
+        # connections on this Pi 3's WiFi chip (no SAE/PMF support).
+        self.assertEqual(by_bssid["50:eb:f8:19:55:10"].ssid, "SSID Beam")
+        self.assertEqual(by_bssid["50:eb:f8:19:55:10"].security_label, "WPA2/WPA3")
+        self.assertEqual(by_bssid["52:eb:f8:19:55:10"].security_label, "WPA2/WPA3")
+
+        # The hidden BSS broadcasts no SSID line at all, but is plain
+        # WPA2-PSK (no SAE) -- distinguishable only via raw `iw scan`.
+        hidden = by_bssid["56:eb:f8:19:55:10"]
+        self.assertEqual(hidden.ssid, "")
+        self.assertEqual(hidden.security_label, "WPA2")
+
+    def test_classify_wifi_security_open_network(self) -> None:
+        block = "BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tcapability: ESS ShortSlotTime (0x0421)\n"
+        self.assertEqual(classify_wifi_security(block), "Open")
+
+    def test_classify_wifi_security_wep(self) -> None:
+        block = "BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tcapability: ESS Privacy ShortSlotTime (0x0431)\n"
+        self.assertEqual(classify_wifi_security(block), "WEP")
 
 
 class ConnManRunErrorDetectionTests(unittest.TestCase):
@@ -176,6 +245,8 @@ class ConnManSnapshotIpv4Tests(unittest.TestCase):
             ),
         )
         with mock.patch.object(backend, "_service_detail") as detail_mock:
+            from resources.lib.backend.connman import parse_service_detail_output
+
             detail_mock.return_value = parse_service_detail_output(
                 "ethernet_b827eb1cd54c_cable", SERVICE_DETAIL_OUTPUT
             )
