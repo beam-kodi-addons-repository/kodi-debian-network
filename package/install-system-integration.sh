@@ -89,7 +89,7 @@ detect_addon_path() {
 validate_environment() {
   [[ "$(id -u)" == "0" ]] || die "Run this installer as root."
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
-  command -v connmanctl >/dev/null 2>&1 || die "connmanctl is required"
+  command -v nmcli >/dev/null 2>&1 || die "nmcli is required"
   command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
   [[ -f "${addon_path}/addon.xml" ]] || die "addon.xml not found in ${addon_path}"
   [[ -f "${addon_path}/resources/lib/helper/server.py" ]] || die "helper server not found in ${addon_path}"
@@ -121,15 +121,15 @@ write_service() {
   cat > "${service_path}" <<EOF
 [Unit]
 Description=Kodi Network Assistant helper service
-Wants=connman.service
-After=connman.service dbus.service network.target
-ConditionPathExists=/usr/bin/connmanctl
+Wants=NetworkManager.service
+After=NetworkManager.service dbus.service network.target
+ConditionPathExists=/usr/bin/nmcli
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/bin/python3 ${runtime_dir}/resources/lib/helper/server.py --socket ${socket_path} --backend connman
+ExecStart=/usr/bin/python3 ${runtime_dir}/resources/lib/helper/server.py --socket ${socket_path} --backend networkmanager
 Restart=on-failure
 RestartSec=2
 

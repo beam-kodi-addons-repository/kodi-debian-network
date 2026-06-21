@@ -12,8 +12,8 @@ if str(ADDON_ROOT) not in sys.path:
     sys.path.insert(0, str(ADDON_ROOT))
 
 from resources.lib.backend.base import BackendUnavailableError
-from resources.lib.backend.connman import ConnManBackend
 from resources.lib.backend.demo import DemoBackend
+from resources.lib.backend.networkmanager import NetworkManagerBackend
 from resources.lib.models import NetworkProfile
 from resources.lib.protocol import RpcRequest, RpcResponse, decode_message, encode_message
 
@@ -83,10 +83,10 @@ def dispatch_request(backend: Any, payload: Mapping[str, Any]) -> dict[str, Any]
 
 def create_backend(mode: str):
     normalized_mode = (mode or "auto").strip().lower()
-    if normalized_mode == "connman":
-        return ConnManBackend()
-    if normalized_mode == "auto" and ConnManBackend.is_tooling_available():
-        return ConnManBackend()
+    if normalized_mode == "networkmanager":
+        return NetworkManagerBackend()
+    if normalized_mode == "auto" and NetworkManagerBackend.is_tooling_available():
+        return NetworkManagerBackend()
     return DemoBackend()
 
 
@@ -109,7 +109,7 @@ def run_server(socket_path: str, backend_mode: str = "auto") -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the Network Assistant helper service")
     parser.add_argument("--socket", default="/run/kodi-network-helper.sock")
-    parser.add_argument("--backend", default="auto", choices=("auto", "demo", "connman"))
+    parser.add_argument("--backend", default="auto", choices=("auto", "demo", "networkmanager"))
     args = parser.parse_args(argv)
     run_server(args.socket, args.backend)
 

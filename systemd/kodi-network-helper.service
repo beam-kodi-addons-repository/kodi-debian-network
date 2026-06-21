@@ -1,14 +1,14 @@
 [Unit]
 Description=Kodi Network Assistant helper service
-Wants=connman.service
-After=connman.service dbus.service network.target
-ConditionPathExists=/usr/bin/connmanctl
+Wants=NetworkManager.service
+After=NetworkManager.service dbus.service network.target
+ConditionPathExists=/usr/bin/nmcli
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/bin/python3 /usr/local/lib/kodi-network-assistant/resources/lib/helper/server.py --socket /run/kodi-network-helper.sock --backend connman
+ExecStart=/usr/bin/python3 /usr/local/lib/kodi-network-assistant/resources/lib/helper/server.py --socket /run/kodi-network-helper.sock --backend networkmanager
 Restart=on-failure
 RestartSec=2
 
