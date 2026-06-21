@@ -295,11 +295,14 @@ class NetworkAssistantApp:
                 if peer.is_self:
                     hostname = f"{hostname} ({self._label(30053, 'this device')})"
                 ip = ", ".join(peer.ips) or "-"
-                state = self._label(30054, "Online") if peer.online else self._label(30055, "Offline")
-                if peer.exit_node:
-                    state = f"{state}, {self._label(30056, 'exit node')}"
-                elif peer.exit_node_option:
-                    state = f"{state}, {self._label(30057, 'offers exit node')}"
+                if peer.status_text:
+                    state = peer.status_text
+                else:
+                    state = self._label(30054, "Online") if peer.online else self._label(30055, "Offline")
+                    if peer.exit_node:
+                        state = f"{state}, {self._label(30056, 'exit node')}"
+                    elif peer.exit_node_option:
+                        state = f"{state}, {self._label(30057, 'offers exit node')}"
                 lines.append(f"- [COLOR {color}]{hostname}  {ip}  {state}[/COLOR]")
         if status.health:
             lines.append("")

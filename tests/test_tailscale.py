@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from resources.lib.tailscale import TailscaleStatus, parse_status_json
+from resources.lib.tailscale import TailscaleStatus, parse_status_json, parse_status_text
 
 
 STATUS_JSON = json.dumps(
@@ -78,6 +78,39 @@ class TailscaleStatusParsingTests(unittest.TestCase):
             [peer.hostname for peer in status.peers[1:]],
             ["example-host-b", "example-host-c", "example-host-d"],
         )
+
+    def test_parse_status_text_live_sample(self) -> None:
+        # Uses placeholder IPs/hostnames (RFC 3849 documentation prefix for
+        # IPv6), not data from any real tailnet.
+        output = (
+            "100.64.0.1      example-host-a       alice  linux   "
+            "active; offers exit node; direct [2001:db8::1]:41641, tx 292 rx 220\n"
+            "100.64.0.2      example-host-b       alice  windows -\n"
+        )
+
+        status_by_ip = parse_status_text(output)
+
+        self.assertEqual(
+            status_by_ip["100.64.0.1"],
+            "active; offers exit node; direct [2001:db8::1]:41641, tx 292 rx 220",
+        )
+        self.assertEqual(status_by_ip["100.64.0.2"], "-")
+
+    def test_parse_status_json_merges_status_text_by_ip(self) -> None:
+        status_by_ip = {
+            "100.64.0.1": "active; offers exit node; direct [2001:db8::1]:41641, tx 292 rx 220",
+            "100.64.0.2": "-",
+        }
+
+        status = parse_status_json(STATUS_JSON, status_by_ip)
+
+        by_hostname = {peer.hostname: peer for peer in status.peers}
+        self.assertEqual(
+            by_hostname["example-host-a"].status_text,
+            "active; offers exit node; direct [2001:db8::1]:41641, tx 292 rx 220",
+        )
+        self.assertEqual(by_hostname["example-host-b"].status_text, "-")
+        self.assertIsNone(by_hostname["example-host-c"].status_text)
 
 
 if __name__ == "__main__":
