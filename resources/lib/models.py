@@ -68,6 +68,7 @@ class AccessPoint:
     autoconnect: bool = False
     security_label: str | None = None
     bssid: str | None = None
+    band: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +81,7 @@ class AccessPoint:
             "autoconnect": self.autoconnect,
             "security_label": self.security_label,
             "bssid": self.bssid,
+            "band": self.band,
         }
 
     @classmethod
@@ -94,6 +96,7 @@ class AccessPoint:
             autoconnect=bool(data.get("autoconnect", False)),
             security_label=data.get("security_label") or None,
             bssid=data.get("bssid") or None,
+            band=data.get("band") or None,
         )
 
 

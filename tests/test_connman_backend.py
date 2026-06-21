@@ -7,11 +7,13 @@ from unittest import mock
 from resources.lib.backend.connman import (
     ConnManBackend,
     ServiceEntry,
+    band_from_frequency,
     build_interactive_connect_script,
     classify_wifi_security,
     extract_connman_error,
     netmask_to_prefix_length,
     parse_iw_dev_interface,
+    parse_iw_link_bssid,
     parse_iw_scan_output,
     parse_service_detail_output,
     parse_services_output,
@@ -74,6 +76,7 @@ IW_DEV_OUTPUT = """phy#0
 
 IW_SCAN_OUTPUT = """BSS 50:eb:f8:19:55:10(on wlan0)
 \tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 2437
 \tSSID: SSID Beam
 \tRSN:\t * Version: 1
 \t\t * Group cipher: CCMP
@@ -81,6 +84,7 @@ IW_SCAN_OUTPUT = """BSS 50:eb:f8:19:55:10(on wlan0)
 \t\t * Authentication suites: PSK FT/PSK PSK/SHA-256 SAE FT/SAE
 BSS 52:eb:f8:19:55:10(on wlan0)
 \tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 5180
 \tSSID: Beam
 \tRSN:\t * Version: 1
 \t\t * Group cipher: CCMP
@@ -88,10 +92,19 @@ BSS 52:eb:f8:19:55:10(on wlan0)
 \t\t * Authentication suites: PSK FT/PSK PSK/SHA-256 SAE FT/SAE
 BSS 56:eb:f8:19:55:10(on wlan0)
 \tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 2462
 \tRSN:\t * Version: 1
 \t\t * Group cipher: CCMP
 \t\t * Pairwise ciphers: CCMP
 \t\t * Authentication suites: PSK
+"""
+
+
+IW_LINK_OUTPUT = """Connected to 56:eb:f8:19:55:10 (on wlan0)
+\tSSID:
+\tfreq: 2462
+\tsignal: -50 dBm
+\ttx bitrate: 65.0 MBit/s
 """
 
 
@@ -200,6 +213,21 @@ class ConnManParserTests(unittest.TestCase):
         self.assertEqual(hidden.ssid, "")
         self.assertEqual(hidden.security_label, "WPA2")
 
+        self.assertEqual(by_bssid["50:eb:f8:19:55:10"].band, "2.4GHz")
+        self.assertEqual(by_bssid["52:eb:f8:19:55:10"].band, "5GHz")
+        self.assertEqual(hidden.band, "2.4GHz")
+
+    def test_band_from_frequency(self) -> None:
+        self.assertEqual(band_from_frequency(2412), "2.4GHz")
+        self.assertEqual(band_from_frequency(5180), "5GHz")
+        self.assertEqual(band_from_frequency(5980), "6GHz")
+
+    def test_parse_iw_link_bssid_live_sample(self) -> None:
+        self.assertEqual(parse_iw_link_bssid(IW_LINK_OUTPUT), "56:eb:f8:19:55:10")
+
+    def test_parse_iw_link_bssid_not_connected(self) -> None:
+        self.assertIsNone(parse_iw_link_bssid("Not connected.\n"))
+
     def test_classify_wifi_security_open_network(self) -> None:
         block = "BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tcapability: ESS ShortSlotTime (0x0421)\n"
         self.assertEqual(classify_wifi_security(block), "Open")
@@ -272,6 +300,56 @@ class ConnManSnapshotIpv4Tests(unittest.TestCase):
 
         self.assertEqual(ipv4.mode, IPv4Mode.DHCP)
         self.assertIsNone(ipv4.address)
+
+
+class ConnManAccessPointsHiddenBssidTests(unittest.TestCase):
+    def test_connected_hidden_network_reports_only_its_own_bssid(self) -> None:
+        # Several BSSIDs can share the same (hidden) SSID -- e.g. a mesh --
+        # so once connected we must report the single BSSID actually
+        # associated with, not the whole candidate list.
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="wifi_hidden_psk",
+                name="",
+                kind=InterfaceKind.WIFI,
+                flags="*AO",
+                security=("psk",),
+            ),
+        )
+        scan_entries = parse_iw_scan_output(IW_SCAN_OUTPUT)
+        hidden_entries = tuple(entry for entry in scan_entries if not entry.ssid)
+
+        with mock.patch.object(backend, "_services", return_value=services), mock.patch.object(
+            backend, "_scan_entries", return_value=hidden_entries
+        ), mock.patch.object(backend, "_wifi_interface_name", return_value="wlan0"), mock.patch.object(
+            backend, "_connected_bssid", return_value="56:eb:f8:19:55:10"
+        ):
+            access_points = backend._access_points()
+
+        self.assertEqual(len(access_points), 1)
+        self.assertEqual(access_points[0].bssid, "56:eb:f8:19:55:10")
+
+    def test_unconnected_hidden_network_lists_all_candidate_bssids(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="wifi_hidden_psk",
+                name="",
+                kind=InterfaceKind.WIFI,
+                flags="",
+                security=("psk",),
+            ),
+        )
+        scan_entries = parse_iw_scan_output(IW_SCAN_OUTPUT)
+        hidden_entries = tuple(entry for entry in scan_entries if not entry.ssid)
+
+        with mock.patch.object(backend, "_services", return_value=services), mock.patch.object(
+            backend, "_scan_entries", return_value=hidden_entries
+        ):
+            access_points = backend._access_points()
+
+        self.assertEqual(access_points[0].bssid, "56:eb:f8:19:55:10")
 
 
 class ConnManPromptDriverTests(unittest.TestCase):

@@ -29,6 +29,7 @@ class DemoBackend(NetworkBackend):
                 connected=True,
                 remembered=True,
                 autoconnect=True,
+                band="5GHz",
             ),
             "wifi-guest": AccessPoint(
                 service_id="wifi-guest",
@@ -38,6 +39,7 @@ class DemoBackend(NetworkBackend):
                 connected=False,
                 remembered=False,
                 autoconnect=False,
+                band="2.4GHz",
             ),
             "wifi-cafe": AccessPoint(
                 service_id="wifi-cafe",
@@ -47,6 +49,7 @@ class DemoBackend(NetworkBackend):
                 connected=False,
                 remembered=False,
                 autoconnect=False,
+                band="2.4GHz",
             ),
         }
         self._interfaces: dict[str, InterfaceState] = {

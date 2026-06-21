@@ -23,9 +23,19 @@ NAMESERVERS_LINE_RE = re.compile(r"^Nameservers\s*=\s*\[(.*)\]\s*$")
 IPV4_FIELD_RE = re.compile(r"(\w+)=([^,\]]+)")
 IW_BSS_HEADER_RE = re.compile(r"^BSS (?P<bssid>[0-9a-fA-F:]{17})\(on", re.MULTILINE)
 IW_SSID_LINE_RE = re.compile(r"^\tSSID: (?P<ssid>.*)$", re.MULTILINE)
+IW_FREQ_LINE_RE = re.compile(r"^\tfreq: (?P<freq>\d+)", re.MULTILINE)
 IW_CAPABILITY_LINE_RE = re.compile(r"^\tcapability: (?P<cap>.*)$", re.MULTILINE)
 IW_AUTH_SUITES_RE = re.compile(r"Authentication suites:\s*(?P<suites>.+)$", re.MULTILINE)
 IW_INTERFACE_RE = re.compile(r"^\tInterface (?P<name>\S+)$", re.MULTILINE)
+IW_LINK_BSSID_RE = re.compile(r"^Connected to (?P<bssid>[0-9a-fA-F:]{17})", re.MULTILINE)
+
+
+def band_from_frequency(freq_mhz: int) -> str:
+    if freq_mhz < 3000:
+        return "2.4GHz"
+    if freq_mhz < 5925:
+        return "5GHz"
+    return "6GHz"
 
 
 @dataclass(frozen=True)
@@ -121,6 +131,7 @@ class ScanEntry:
     bssid: str
     ssid: str
     security_label: str
+    band: str | None = None
 
 
 def classify_wifi_security(block: str) -> str:
@@ -155,11 +166,13 @@ def parse_iw_scan_output(output: str) -> tuple[ScanEntry, ...]:
         end = matches[index + 1].start() if index + 1 < len(matches) else len(output)
         block = output[start:end]
         ssid_match = IW_SSID_LINE_RE.search(block)
+        freq_match = IW_FREQ_LINE_RE.search(block)
         entries.append(
             ScanEntry(
                 bssid=match.group("bssid").lower(),
                 ssid=ssid_match.group("ssid") if ssid_match else "",
                 security_label=classify_wifi_security(block),
+                band=band_from_frequency(int(freq_match.group("freq"))) if freq_match else None,
             )
         )
     return tuple(entries)
@@ -168,6 +181,11 @@ def parse_iw_scan_output(output: str) -> tuple[ScanEntry, ...]:
 def parse_iw_dev_interface(output: str) -> str | None:
     match = IW_INTERFACE_RE.search(output)
     return match.group("name") if match else None
+
+
+def parse_iw_link_bssid(output: str) -> str | None:
+    match = IW_LINK_BSSID_RE.search(output)
+    return match.group("bssid").lower() if match else None
 
 
 def parse_technologies_output(output: str) -> dict[InterfaceKind, TechnologyStatus]:
@@ -464,6 +482,20 @@ class ConnManBackend(NetworkBackend):
             return None
         return parse_iw_dev_interface(completed.stdout)
 
+    def _connected_bssid(self, iface: str) -> str | None:
+        # Disambiguates which physical AP a hidden-SSID service is actually
+        # associated with, since "iw scan dump" alone can't tell several
+        # BSSIDs sharing a hidden SSID apart.
+        try:
+            completed = subprocess.run(
+                ["iw", "dev", iface, "link"], capture_output=True, text=True, check=False, timeout=5
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if completed.returncode != 0:
+            return None
+        return parse_iw_link_bssid(completed.stdout)
+
     def _scan_entries(self) -> tuple[ScanEntry, ...]:
         # Best-effort enrichment only (real WPA/WPA2/WPA3 security label and
         # BSSID, which connmanctl itself doesn't expose). Reads the kernel's
@@ -495,19 +527,33 @@ class ConnManBackend(NetworkBackend):
             else:
                 hidden_scan_entries.append(scan_entry)
 
+        connected_bssid: str | None = None
+        if hidden_scan_entries and any(entry.connected for entry in entries):
+            iface = self._wifi_interface_name()
+            if iface:
+                connected_bssid = self._connected_bssid(iface)
+
         access_points: list[AccessPoint] = []
         for index, entry in enumerate(entries):
             signal = max(10, 100 - int(index * (80 / count)))
             security_label: str | None = None
             bssid: str | None = None
+            band: str | None = None
             if entry.name:
                 scan_match = scan_by_ssid.get(entry.name)
                 if scan_match:
                     security_label = scan_match.security_label
                     bssid = scan_match.bssid
+                    band = scan_match.band
             elif hidden_scan_entries:
                 security_label = hidden_scan_entries[0].security_label
-                bssid = ", ".join(sorted({item.bssid for item in hidden_scan_entries}))
+                hidden_by_bssid = {item.bssid: item for item in hidden_scan_entries}
+                if entry.connected and connected_bssid in hidden_by_bssid:
+                    bssid = connected_bssid
+                    band = hidden_by_bssid[connected_bssid].band
+                else:
+                    bssid = ", ".join(sorted(hidden_by_bssid))
+                    band = hidden_scan_entries[0].band
             access_points.append(
                 AccessPoint(
                     service_id=entry.service_id,
@@ -519,6 +565,7 @@ class ConnManBackend(NetworkBackend):
                     autoconnect=entry.autoconnect,
                     security_label=security_label,
                     bssid=bssid,
+                    band=band,
                 )
             )
         return tuple(access_points)

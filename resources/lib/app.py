@@ -273,7 +273,8 @@ class NetworkAssistantApp:
                 if not access_point.ssid and access_point.bssid:
                     name = f"{name} ({access_point.bssid})"
                 security = f" {access_point.security_label}" if access_point.security_label else ""
-                lines.append(f"- [COLOR {color}]{name} [{access_point.signal}%]{security} {state}[/COLOR]")
+                band = f" {access_point.band}" if access_point.band else ""
+                lines.append(f"- [COLOR {color}]{name} [{access_point.signal}%]{security}{band} {state}[/COLOR]")
         if snapshot.message:
             lines.append("")
             lines.append(f"[COLOR red]{snapshot.message}[/COLOR]")
@@ -337,6 +338,8 @@ class NetworkAssistantApp:
                     label_bits.append(access_point.security_label)
                 elif access_point.security:
                     label_bits.append("secured")
+                if access_point.band:
+                    label_bits.append(access_point.band)
                 color = "green" if access_point.connected else "yellow" if access_point.remembered else None
                 context_menu = []
                 if access_point.connected:
