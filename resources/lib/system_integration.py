@@ -9,6 +9,7 @@ from pathlib import Path
 
 DEFAULT_RUNTIME_DIR = "/usr/local/lib/kodi-network-assistant"
 DEFAULT_SERVICE_PATH = "/etc/systemd/system/kodi-network-helper.service"
+DEFAULT_INSTALLER_PATH = "/usr/local/sbin/kodi-network-assistant-system-install"
 
 
 @dataclass(frozen=True)
@@ -71,10 +72,19 @@ def build_system_install_command(
     kodi_user: str | None = None,
     use_sudo: bool | None = None,
 ) -> list[str]:
-    installer_script = build_bootstrap_installer_path(addon_path)
     user_name = kodi_user or get_current_user_name()
     if use_sudo is None:
         use_sudo = os.geteuid() != 0
+
+    # The bash installer copies itself to DEFAULT_INSTALLER_PATH and grants
+    # NOPASSWD sudo only for that canonical path (see install_sudoers_rule()
+    # in package/install-system-integration.sh). Re-running self-repair via
+    # sudo must therefore target that same canonical path, not the add-on's
+    # own bundled copy, or sudo -n will always fall back to asking for a
+    # password. The initial root-context bootstrap (use_sudo=False) still
+    # runs the bundled copy directly, since that's what creates the
+    # canonical installed copy in the first place.
+    installer_script = DEFAULT_INSTALLER_PATH if use_sudo else build_bootstrap_installer_path(addon_path)
 
     command: list[str] = []
     if use_sudo:

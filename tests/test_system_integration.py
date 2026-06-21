@@ -7,6 +7,7 @@ import unittest
 from unittest import mock
 
 from resources.lib.system_integration import (
+    DEFAULT_INSTALLER_PATH,
     DEFAULT_RUNTIME_DIR,
     build_system_install_command,
     detect_bootstrap_status,
@@ -16,6 +17,8 @@ from resources.lib.system_integration import (
 
 class SystemIntegrationTests(unittest.TestCase):
     def test_build_system_install_command_with_sudo(self) -> None:
+        # Self-repair via sudo must target the canonical installed path, since
+        # that's the only path the bash installer's --install-sudoers rule covers.
         self.assertEqual(
             build_system_install_command(
                 "/opt/addons/plugin.program.networkassistant",
@@ -25,7 +28,7 @@ class SystemIntegrationTests(unittest.TestCase):
             [
                 "sudo",
                 "-n",
-                "/opt/addons/plugin.program.networkassistant/package/install-system-integration.sh",
+                DEFAULT_INSTALLER_PATH,
                 "--addon-path",
                 "/opt/addons/plugin.program.networkassistant",
                 "--kodi-user",
