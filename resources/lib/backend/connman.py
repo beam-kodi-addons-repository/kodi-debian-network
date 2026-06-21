@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import time
 from dataclasses import dataclass
+from typing import Iterable
 
 from .base import BackendUnavailableError, NetworkBackend
 from ..models import AccessPoint, IPv4Configuration, IPv4Mode, InterfaceKind, InterfaceState, NetworkProfile, NetworkSnapshot
@@ -30,12 +31,24 @@ IW_INTERFACE_RE = re.compile(r"^\tInterface (?P<name>\S+)$", re.MULTILINE)
 IW_LINK_BSSID_RE = re.compile(r"^Connected to (?P<bssid>[0-9a-fA-F:]{17})", re.MULTILINE)
 
 
+BAND_ORDER = ("2.4GHz", "5GHz", "6GHz")
+
+
 def band_from_frequency(freq_mhz: int) -> str:
     if freq_mhz < 3000:
         return "2.4GHz"
     if freq_mhz < 5925:
         return "5GHz"
     return "6GHz"
+
+
+def combine_bands(bands: Iterable[str | None]) -> str | None:
+    unique = {band for band in bands if band}
+    if not unique:
+        return None
+    ordered = [band for band in BAND_ORDER if band in unique]
+    ordered += sorted(unique - set(ordered))
+    return "/".join(ordered)
 
 
 @dataclass(frozen=True)
@@ -519,11 +532,11 @@ class ConnManBackend(NetworkBackend):
         entries = [entry for entry in self._services() if entry.kind == InterfaceKind.WIFI]
         count = max(len(entries), 1)
 
-        scan_by_ssid: dict[str, ScanEntry] = {}
+        scan_by_ssid: dict[str, list[ScanEntry]] = {}
         hidden_scan_entries: list[ScanEntry] = []
         for scan_entry in self._scan_entries():
             if scan_entry.ssid:
-                scan_by_ssid.setdefault(scan_entry.ssid, scan_entry)
+                scan_by_ssid.setdefault(scan_entry.ssid, []).append(scan_entry)
             else:
                 hidden_scan_entries.append(scan_entry)
 
@@ -536,38 +549,80 @@ class ConnManBackend(NetworkBackend):
         access_points: list[AccessPoint] = []
         for index, entry in enumerate(entries):
             signal = max(10, 100 - int(index * (80 / count)))
-            security_label: str | None = None
-            bssid: str | None = None
-            band: str | None = None
             if entry.name:
-                scan_match = scan_by_ssid.get(entry.name)
-                if scan_match:
-                    security_label = scan_match.security_label
-                    bssid = scan_match.bssid
-                    band = scan_match.band
-            elif hidden_scan_entries:
-                security_label = hidden_scan_entries[0].security_label
-                hidden_by_bssid = {item.bssid: item for item in hidden_scan_entries}
-                if entry.connected and connected_bssid in hidden_by_bssid:
-                    bssid = connected_bssid
-                    band = hidden_by_bssid[connected_bssid].band
-                else:
-                    bssid = ", ".join(sorted(hidden_by_bssid))
-                    band = hidden_scan_entries[0].band
-            access_points.append(
-                AccessPoint(
-                    service_id=entry.service_id,
-                    ssid=entry.name,
-                    signal=signal,
-                    security=entry.security,
-                    connected=entry.connected,
-                    remembered=entry.remembered,
-                    autoconnect=entry.autoconnect,
-                    security_label=security_label,
-                    bssid=bssid,
-                    band=band,
+                # A dual-band AP broadcasts the same SSID as two separate
+                # BSSIDs (one per radio) -- merge their bands rather than
+                # showing only whichever scan result happened to match first.
+                matches = scan_by_ssid.get(entry.name, [])
+                security_label = matches[0].security_label if matches else None
+                bssid = matches[0].bssid if matches else None
+                band = combine_bands(match.band for match in matches) if matches else None
+                access_points.append(
+                    AccessPoint(
+                        service_id=entry.service_id,
+                        ssid=entry.name,
+                        signal=signal,
+                        security=entry.security,
+                        connected=entry.connected,
+                        remembered=entry.remembered,
+                        autoconnect=entry.autoconnect,
+                        security_label=security_label,
+                        bssid=bssid,
+                        band=band,
+                    )
                 )
-            )
+            elif entry.connected:
+                # Once associated we know exactly which physical AP we're
+                # on (if "iw link" could resolve it) -- a single row, no
+                # candidate list needed.
+                matched = next((item for item in hidden_scan_entries if item.bssid == connected_bssid), None)
+                fallback = hidden_scan_entries[0] if hidden_scan_entries else None
+                access_points.append(
+                    AccessPoint(
+                        service_id=entry.service_id,
+                        ssid=entry.name,
+                        signal=signal,
+                        security=entry.security,
+                        connected=True,
+                        remembered=entry.remembered,
+                        autoconnect=entry.autoconnect,
+                        security_label=(matched or fallback).security_label if (matched or fallback) else None,
+                        bssid=matched.bssid if matched else None,
+                        band=matched.band if matched else None,
+                    )
+                )
+            elif hidden_scan_entries:
+                # Nearby hidden-SSID BSSIDs are usually unrelated physical
+                # APs, not one network -- list each as its own candidate
+                # row (sharing this placeholder service_id) instead of
+                # cramming every BSSID into a single grouped entry.
+                for scan_entry in hidden_scan_entries:
+                    access_points.append(
+                        AccessPoint(
+                            service_id=entry.service_id,
+                            ssid=entry.name,
+                            signal=signal,
+                            security=entry.security,
+                            connected=False,
+                            remembered=entry.remembered,
+                            autoconnect=entry.autoconnect,
+                            security_label=scan_entry.security_label,
+                            bssid=scan_entry.bssid,
+                            band=scan_entry.band,
+                        )
+                    )
+            else:
+                access_points.append(
+                    AccessPoint(
+                        service_id=entry.service_id,
+                        ssid=entry.name,
+                        signal=signal,
+                        security=entry.security,
+                        connected=entry.connected,
+                        remembered=entry.remembered,
+                        autoconnect=entry.autoconnect,
+                    )
+                )
         return tuple(access_points)
 
     def _apply_profile_config(self, profile: NetworkProfile) -> None:

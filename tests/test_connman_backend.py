@@ -9,6 +9,7 @@ from resources.lib.backend.connman import (
     ServiceEntry,
     band_from_frequency,
     build_interactive_connect_script,
+    combine_bands,
     classify_wifi_security,
     extract_connman_error,
     netmask_to_prefix_length,
@@ -105,6 +106,42 @@ IW_LINK_OUTPUT = """Connected to 56:eb:f8:19:55:10 (on wlan0)
 \tfreq: 2462
 \tsignal: -50 dBm
 \ttx bitrate: 65.0 MBit/s
+"""
+
+
+IW_SCAN_OUTPUT_DUAL_BAND = """BSS 50:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 2437
+\tSSID: Dual Band
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK
+BSS 51:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 5180
+\tSSID: Dual Band
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK
+"""
+
+
+IW_SCAN_OUTPUT_MULTI_HIDDEN = """BSS 56:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 2462
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK
+BSS 5a:eb:f8:19:55:10(on wlan0)
+\tcapability: ESS Privacy ShortPreamble ShortSlotTime (0x0431)
+\tfreq: 5500
+\tRSN:\t * Version: 1
+\t\t * Group cipher: CCMP
+\t\t * Pairwise ciphers: CCMP
+\t\t * Authentication suites: PSK
 """
 
 
@@ -228,6 +265,11 @@ class ConnManParserTests(unittest.TestCase):
     def test_parse_iw_link_bssid_not_connected(self) -> None:
         self.assertIsNone(parse_iw_link_bssid("Not connected.\n"))
 
+    def test_combine_bands_orders_and_deduplicates(self) -> None:
+        self.assertEqual(combine_bands(["5GHz", "2.4GHz", "2.4GHz"]), "2.4GHz/5GHz")
+        self.assertEqual(combine_bands(["6GHz"]), "6GHz")
+        self.assertIsNone(combine_bands([None, None]))
+
     def test_classify_wifi_security_open_network(self) -> None:
         block = "BSS aa:bb:cc:dd:ee:ff(on wlan0)\n\tcapability: ESS ShortSlotTime (0x0421)\n"
         self.assertEqual(classify_wifi_security(block), "Open")
@@ -350,6 +392,57 @@ class ConnManAccessPointsHiddenBssidTests(unittest.TestCase):
             access_points = backend._access_points()
 
         self.assertEqual(access_points[0].bssid, "56:eb:f8:19:55:10")
+
+    def test_unconnected_hidden_networks_are_listed_as_separate_entries(self) -> None:
+        # Multiple hidden-SSID BSSIDs nearby are usually unrelated physical
+        # APs, not one network -- they must show up as distinct rows
+        # instead of being merged into a single grouped "Hidden network".
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="wifi_hidden_psk",
+                name="",
+                kind=InterfaceKind.WIFI,
+                flags="",
+                security=("psk",),
+            ),
+        )
+        scan_entries = parse_iw_scan_output(IW_SCAN_OUTPUT_MULTI_HIDDEN)
+
+        with mock.patch.object(backend, "_services", return_value=services), mock.patch.object(
+            backend, "_scan_entries", return_value=scan_entries
+        ):
+            access_points = backend._access_points()
+
+        self.assertEqual(len(access_points), 2)
+        self.assertEqual(
+            {ap.bssid for ap in access_points},
+            {"56:eb:f8:19:55:10", "5a:eb:f8:19:55:10"},
+        )
+        bssid_to_band = {ap.bssid: ap.band for ap in access_points}
+        self.assertEqual(bssid_to_band["56:eb:f8:19:55:10"], "2.4GHz")
+        self.assertEqual(bssid_to_band["5a:eb:f8:19:55:10"], "5GHz")
+
+    def test_dual_band_ssid_reports_combined_band(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        services = (
+            ServiceEntry(
+                service_id="wifi_dual_psk",
+                name="Dual Band",
+                kind=InterfaceKind.WIFI,
+                flags="",
+                security=("psk",),
+            ),
+        )
+        scan_entries = parse_iw_scan_output(IW_SCAN_OUTPUT_DUAL_BAND)
+
+        with mock.patch.object(backend, "_services", return_value=services), mock.patch.object(
+            backend, "_scan_entries", return_value=scan_entries
+        ):
+            access_points = backend._access_points()
+
+        self.assertEqual(len(access_points), 1)
+        self.assertEqual(access_points[0].band, "2.4GHz/5GHz")
 
 
 class ConnManPromptDriverTests(unittest.TestCase):
