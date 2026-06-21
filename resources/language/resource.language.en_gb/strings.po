@@ -143,3 +143,7 @@ msgstr "Bootstrap is required before network control will work"
 msgctxt "#30042"
 msgid "The add-on will install the helper service and required system files."
 msgstr "The add-on will install the helper service and required system files."
+
+msgctxt "#30043"
+msgid "Hidden network"
+msgstr "Hidden network"

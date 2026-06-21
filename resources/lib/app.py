@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode
 
 try:  # pragma: no cover - only available inside Kodi runtime
+    import xbmc  # type: ignore
     import xbmcaddon  # type: ignore
     import xbmcgui  # type: ignore
     import xbmcplugin  # type: ignore
     import xbmcvfs  # type: ignore
 except ImportError:  # pragma: no cover - exercised only outside Kodi
+    xbmc = None
     xbmcaddon = None
     xbmcgui = None
     xbmcplugin = None
@@ -38,6 +40,7 @@ class MenuItem:
     action: str
     params: dict[str, str]
     folder: bool = True
+    color: str | None = None
 
 
 class NetworkAssistantApp:
@@ -103,6 +106,13 @@ class NetworkAssistantApp:
         query = urlencode({"action": action, **params})
         return f"{self.argv[0]}?{query}"
 
+    def _refresh_container(self) -> None:
+        if xbmc is not None:
+            xbmc.executebuiltin("Container.Refresh")
+
+    def _ssid_label(self, ssid: str) -> str:
+        return ssid or self._label(30043, "Hidden network")
+
     def _notify(self, title: str, message: str, level: str = "info") -> None:
         icon = xbmcgui.NOTIFICATION_INFO
         if level == "warning":
@@ -132,7 +142,8 @@ class NetworkAssistantApp:
         xbmcplugin.setPluginCategory(self.handle, title)
         xbmcplugin.setContent(self.handle, "files")
         for item in items:
-            list_item = xbmcgui.ListItem(label=item.label)
+            label = f"[COLOR {item.color}]{item.label}[/COLOR]" if item.color else item.label
+            list_item = xbmcgui.ListItem(label=label)
             xbmcplugin.addDirectoryItem(
                 self.handle,
                 self._url(item.action, **item.params),
@@ -148,8 +159,14 @@ class NetworkAssistantApp:
         if action == "wifi":
             self.show_wifi()
             return
+        if action == "refresh_wifi":
+            self.refresh_wifi()
+            return
         if action == "interfaces":
             self.show_interfaces()
+            return
+        if action == "refresh_interfaces":
+            self.refresh_interfaces()
             return
         if action == "status":
             self.show_status()
@@ -207,8 +224,10 @@ class NetworkAssistantApp:
             lines.append(self._label(30008, "Interfaces"))
             for interface in snapshot.interfaces:
                 suffix = " / connected" if interface.connected else ""
+                color = "green" if interface.connected else "red" if not interface.enabled else "white"
                 lines.append(
-                    f"- {interface.name} ({interface.kind.value}): {self._state_word(interface.enabled)}{suffix}"
+                    f"- [COLOR {color}]{interface.name} ({interface.kind.value}): "
+                    f"{self._state_word(interface.enabled)}{suffix}[/COLOR]"
                 )
                 if interface.mac_address:
                     lines.append(f"    MAC: {interface.mac_address}")
@@ -223,16 +242,18 @@ class NetworkAssistantApp:
             lines.append(self._label(30007, "Wi-Fi networks"))
             for access_point in snapshot.access_points:
                 state = "connected" if access_point.connected else "saved" if access_point.remembered else "available"
-                lines.append(f"- {access_point.ssid} [{access_point.signal}%] {state}")
+                color = "green" if access_point.connected else "yellow" if access_point.remembered else "white"
+                name = self._ssid_label(access_point.ssid)
+                lines.append(f"- [COLOR {color}]{name} [{access_point.signal}%] {state}[/COLOR]")
         if snapshot.message:
             lines.append("")
-            lines.append(snapshot.message)
+            lines.append(f"[COLOR red]{snapshot.message}[/COLOR]")
         self._show_text(self._label(30009, "Status"), "\n".join(lines))
         self.show_root()
 
     def show_wifi(self) -> None:
         snapshot = self._snapshot()
-        items: list[MenuItem] = [MenuItem(self._label(30011, "Rescan Wi-Fi"), "wifi", {}, False)]
+        items: list[MenuItem] = [MenuItem(self._label(30011, "Rescan Wi-Fi"), "refresh_wifi", {}, False)]
 
         try:
             access_points = self.backend.scan_wifi() if snapshot.wifi_enabled else ()
@@ -244,27 +265,33 @@ class NetworkAssistantApp:
             items.append(MenuItem(self._label(30026, "No Wi-Fi networks found"), "root", {}, False))
         else:
             for access_point in access_points:
-                label_bits = [access_point.ssid, f"{access_point.signal}%"]
+                label_bits = [self._ssid_label(access_point.ssid), f"{access_point.signal}%"]
                 if access_point.connected:
                     label_bits.append(self._label(30015, "Connected"))
                 elif access_point.remembered:
                     label_bits.append("saved")
                 if access_point.security:
                     label_bits.append("secured")
+                color = "green" if access_point.connected else "yellow" if access_point.remembered else None
                 items.append(
                     MenuItem(
                         "  ".join(label_bits),
                         "connect",
                         {"service_id": access_point.service_id},
                         False,
+                        color,
                     )
                 )
 
         self._render(self._label(30007, "Wi-Fi networks"), items)
 
+    def refresh_wifi(self) -> None:
+        self._refresh_container()
+        self.show_wifi()
+
     def show_interfaces(self) -> None:
         snapshot = self._snapshot()
-        items: list[MenuItem] = [MenuItem(self._label(30012, "Refresh"), "interfaces", {}, False)]
+        items: list[MenuItem] = [MenuItem(self._label(30012, "Refresh"), "refresh_interfaces", {}, False)]
 
         if not snapshot.interfaces:
             items.append(MenuItem(self._label(30027, "No interfaces found"), "root", {}, False))
@@ -273,16 +300,24 @@ class NetworkAssistantApp:
                 label = f"{interface.name}  {self._state_word(interface.enabled)}"
                 if interface.connected:
                     label += "  connected"
+                    if interface.ipv4.address:
+                        label += f"  ({interface.ipv4.address})"
+                color = "green" if interface.connected else "red" if not interface.enabled else None
                 items.append(
                     MenuItem(
                         label,
                         "toggle_interface",
                         {"kind": interface.kind.value},
                         False,
+                        color,
                     )
                 )
 
         self._render(self._label(30008, "Interfaces"), items)
+
+    def refresh_interfaces(self) -> None:
+        self._refresh_container()
+        self.show_interfaces()
 
     def connect_wifi(self) -> None:
         service_id = self._param("service_id")
@@ -295,6 +330,7 @@ class NetworkAssistantApp:
         access_point = next((item for item in snapshot.access_points if item.service_id == service_id), None)
         dialog = xbmcgui.Dialog()
         ssid = access_point.ssid if access_point else service_id
+        display_name = self._ssid_label(ssid)
 
         password = None
         needs_password = self._needs_password(access_point)
@@ -310,7 +346,7 @@ class NetworkAssistantApp:
 
         autoconnect = dialog.yesno(
             self._label(30018, "Save profile and autoconnect?"),
-            ssid,
+            display_name,
         )
         mode_index = dialog.select(
             self._label(30022, "Network configuration"),
@@ -345,10 +381,11 @@ class NetworkAssistantApp:
 
         try:
             self.backend.connect_wifi(profile)
-            self._notify(self._label(30017, "Connect / edit"), ssid)
+            self._notify(self._label(30017, "Connect / edit"), display_name)
         except (BackendUnavailableError, Exception) as exc:
             self._notify(self._label(30009, "Status"), str(exc), level="error")
 
+        self._refresh_container()
         self.show_wifi()
 
     def toggle_interface(self) -> None:
@@ -369,6 +406,7 @@ class NetworkAssistantApp:
         except (BackendUnavailableError, Exception) as exc:
             self._notify(self._label(30009, "Status"), str(exc), level="error")
 
+        self._refresh_container()
         self.show_interfaces()
 
     def install_system_integration(self) -> None:
