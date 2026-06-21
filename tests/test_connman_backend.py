@@ -16,6 +16,30 @@ from resources.lib.backend.base import BackendUnavailableError
 from resources.lib.models import IPv4Configuration, IPv4Mode, InterfaceKind, NetworkProfile, NetworkSnapshot
 
 
+class FakeInteractiveIO:
+    """Feeds canned connmanctl output chunks to `_run_prompt_driver` and
+    records the lines written back, without touching real subprocess/pty IO.
+    """
+
+    def __init__(self, chunks: list[str]) -> None:
+        self._chunks = iter(chunks)
+        self.written_lines: list[str] = []
+        self.finished = False
+
+    def write_line(self, line: str) -> None:
+        self.written_lines.append(line)
+
+    def read_chunk(self) -> str:
+        try:
+            return next(self._chunks)
+        except StopIteration:
+            self.finished = True
+            return ""
+
+    def is_finished(self) -> bool:
+        return self.finished
+
+
 TECHNOLOGIES_OUTPUT = """/net/connman/technology/wifi
   Name = WiFi
   Type = wifi
@@ -70,6 +94,94 @@ class ConnManParserTests(unittest.TestCase):
         self.assertEqual(extract_connman_error(output), "Error /net/connman/service/test: invalid-key")
 
 
+class ConnManRunErrorDetectionTests(unittest.TestCase):
+    def test_run_raises_on_textual_error_with_zero_exit_code(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        with mock.patch.object(ConnManBackend, "is_tooling_available", return_value=True), mock.patch(
+            "resources.lib.backend.connman.subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["connmanctl", "connect", "wifi_test"], 0, "Error /net/connman/service/wifi_test: Not registered\n", ""
+            ),
+        ):
+            with self.assertRaises(BackendUnavailableError):
+                backend._run("connect", "wifi_test")
+
+    def test_run_passes_through_clean_output(self) -> None:
+        backend = ConnManBackend(executable="connmanctl")
+        with mock.patch.object(ConnManBackend, "is_tooling_available", return_value=True), mock.patch(
+            "resources.lib.backend.connman.subprocess.run",
+            return_value=subprocess.CompletedProcess(["connmanctl", "services"], 0, SERVICES_OUTPUT, ""),
+        ):
+            result = backend._run("services")
+
+        self.assertEqual(result, SERVICES_OUTPUT)
+
+
+class ConnManPromptDriverTests(unittest.TestCase):
+    """Exercises the connmanctl prompt state machine directly, decoupled
+    from the real pty/subprocess plumbing in `_drive_interactive_connect`.
+    """
+
+    def test_prompt_driver_succeeds_with_correct_password(self) -> None:
+        io = FakeInteractiveIO(
+            [
+                "Error getting VPN connections: The name net.connman.vpn was not provided\n",
+                "Agent registered\n",
+                "Agent RequestInput wifi_test_psk\n",
+                "Passphrase? \n",
+                "Connected wifi_test_psk\n",
+            ]
+        )
+
+        result = ConnManBackend._run_prompt_driver(
+            io.write_line, io.read_chunk, io.is_finished, "wifi_test_psk", "secret"
+        )
+
+        self.assertIn("Connected wifi_test_psk", result)
+        self.assertEqual(io.written_lines, ["agent on", "connect wifi_test_psk", "secret", "quit"])
+
+    def test_prompt_driver_raises_and_aborts_on_invalid_password(self) -> None:
+        io = FakeInteractiveIO(
+            [
+                "Error getting VPN connections: The name net.connman.vpn was not provided\n",
+                "Agent registered\n",
+                "Agent RequestInput wifi_test_psk\n",
+                "Passphrase? \n",
+                "Agent ReportError wifi_test_psk\n",
+                "  invalid-key\n",
+                "Retry (yes/no)? \n",
+            ]
+        )
+
+        with self.assertRaises(BackendUnavailableError):
+            ConnManBackend._run_prompt_driver(
+                io.write_line, io.read_chunk, io.is_finished, "wifi_test_psk", "secret"
+            )
+
+        self.assertEqual(io.written_lines[-2:], ["no", "quit"])
+
+    def test_prompt_driver_does_not_false_positive_on_vpn_startup_banner(self) -> None:
+        # connmanctl always prints this on startup; it must not be mistaken
+        # for a real connect failure (this is the exact bug reproduced live
+        # against a Raspberry Pi: the VPN banner from "agent on" was bleeding
+        # into the error check for the subsequent "connect" command).
+        io = FakeInteractiveIO(
+            [
+                "Error getting VPN connections: The name net.connman.vpn was not provided\n",
+                "Agent registered\n",
+                "Agent RequestInput wifi_test_psk\n",
+                "Passphrase? \n",
+                "Connected wifi_test_psk\n",
+            ]
+        )
+
+        result = ConnManBackend._run_prompt_driver(
+            io.write_line, io.read_chunk, io.is_finished, "wifi_test_psk", "secret"
+        )
+
+        self.assertIn("Connected", result)
+
+
 class ConnManConnectTests(unittest.TestCase):
     def test_connect_wifi_falls_back_to_interactive_passphrase(self) -> None:
         backend = ConnManBackend(executable="connmanctl")
@@ -88,11 +200,12 @@ class ConnManConnectTests(unittest.TestCase):
 
         with mock.patch.object(ConnManBackend, "is_tooling_available", return_value=True), mock.patch(
             "resources.lib.backend.connman.subprocess.run",
-            side_effect=(
-                subprocess.CompletedProcess(["connmanctl", "connect", "wifi_test_psk"], 1, "", "Error invalid-key"),
-                subprocess.CompletedProcess(["connmanctl"], 0, "Agent registered\nConnected wifi_test_psk\n", ""),
-            ),
-        ) as run_mock, mock.patch.object(backend, "_apply_profile_config") as apply_config_mock, mock.patch.object(
+            return_value=subprocess.CompletedProcess(["connmanctl", "connect", "wifi_test_psk"], 0, "Error invalid-key\n", ""),
+        ), mock.patch.object(
+            backend, "_drive_interactive_connect", return_value="Connected wifi_test_psk\n"
+        ) as drive_mock, mock.patch.object(
+            backend, "_apply_profile_config"
+        ) as apply_config_mock, mock.patch.object(
             backend,
             "snapshot",
             return_value=snapshot,
@@ -100,13 +213,8 @@ class ConnManConnectTests(unittest.TestCase):
             result = backend.connect_wifi(profile)
 
         self.assertEqual(result, snapshot)
+        drive_mock.assert_called_once_with("wifi_test_psk", "secret")
         apply_config_mock.assert_called_once_with(profile)
-        self.assertEqual(run_mock.call_count, 2)
-        self.assertEqual(run_mock.call_args_list[1].args[0], ["connmanctl"])
-        self.assertEqual(
-            run_mock.call_args_list[1].kwargs["input"],
-            build_interactive_connect_script("wifi_test_psk", "secret"),
-        )
 
     def test_connect_wifi_raises_when_interactive_connect_fails(self) -> None:
         backend = ConnManBackend(executable="connmanctl")
@@ -120,10 +228,9 @@ class ConnManConnectTests(unittest.TestCase):
 
         with mock.patch.object(ConnManBackend, "is_tooling_available", return_value=True), mock.patch(
             "resources.lib.backend.connman.subprocess.run",
-            side_effect=(
-                subprocess.CompletedProcess(["connmanctl", "connect", "wifi_test_psk"], 1, "", "Error invalid-key"),
-                subprocess.CompletedProcess(["connmanctl"], 0, "Agent registered\nError /net/connman/service/test: invalid-key\n", ""),
-            ),
+            return_value=subprocess.CompletedProcess(["connmanctl", "connect", "wifi_test_psk"], 0, "Error invalid-key\n", ""),
+        ), mock.patch.object(
+            backend, "_drive_interactive_connect", side_effect=BackendUnavailableError("Invalid passphrase")
         ), mock.patch.object(backend, "_apply_profile_config") as apply_config_mock:
             with self.assertRaises(BackendUnavailableError):
                 backend.connect_wifi(profile)

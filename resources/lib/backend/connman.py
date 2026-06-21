@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import ipaddress
+import os
+import pty
 import re
+import selectors
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 
 from .base import BackendUnavailableError, NetworkBackend
@@ -12,6 +16,8 @@ from ..models import AccessPoint, IPv4Configuration, IPv4Mode, InterfaceKind, In
 
 SERVICE_LINE_RE = re.compile(r"^(?P<left>.+?)\s{2,}(?P<service_id>(?:wifi|ethernet)_[^\s]+)$")
 CONNMAN_ERROR_RE = re.compile(r"\bError\b.*", re.IGNORECASE)
+PASSPHRASE_PROMPT_RE = re.compile(r"Passphrase\?", re.IGNORECASE)
+RETRY_PROMPT_RE = re.compile(r"Retry\s*\(yes/no\)\?", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -162,6 +168,18 @@ class ConnManBackend(NetworkBackend):
     def is_tooling_available() -> bool:
         return shutil.which("connmanctl") is not None
 
+    @staticmethod
+    def _raise_if_connman_error(stdout: str, stderr: str, returncode: int, args: tuple[str, ...]) -> None:
+        combined = "\n".join(part for part in (stdout, stderr) if part)
+        if returncode != 0:
+            message = (stderr or stdout or "").strip()
+            if not message:
+                message = f"connmanctl {' '.join(args)} failed with code {returncode}"
+            raise BackendUnavailableError(message)
+        error_message = extract_connman_error(combined)
+        if error_message:
+            raise BackendUnavailableError(error_message)
+
     def _run(self, *args: str) -> str:
         if not self.is_tooling_available():
             raise BackendUnavailableError("connmanctl is not installed")
@@ -172,33 +190,124 @@ class ConnManBackend(NetworkBackend):
             text=True,
             check=False,
         )
-        if completed.returncode != 0:
-            message = (completed.stderr or completed.stdout or "").strip()
-            if not message:
-                message = f"connmanctl {' '.join(args)} failed with code {completed.returncode}"
-            raise BackendUnavailableError(message)
+        self._raise_if_connman_error(completed.stdout, completed.stderr, completed.returncode, args)
         return completed.stdout
 
-    def _run_interactive(self, script: str) -> str:
+    @staticmethod
+    def _run_prompt_driver(write_line, read_chunk, is_finished, service_id: str, password: str, timeout: float = 20.0) -> str:
+        """Drive connmanctl's interactive agent prompts to completion.
+
+        Decoupled from the actual subprocess/pty plumbing so the prompt
+        state machine can be unit tested with fake IO callables.
+        """
+        output_buffer: list[str] = []
+
+        def read_until(predicate, deadline: float) -> str:
+            # Only text read *during this call* is considered, so stale output
+            # from a previous step (e.g. connmanctl's benign "Error getting VPN
+            # connections" startup banner after "agent on") never gets mistaken
+            # for an error/prompt belonging to a later step.
+            segment_start = len(output_buffer)
+            segment = ""
+            while time.monotonic() < deadline:
+                if predicate(segment):
+                    return segment
+                if is_finished():
+                    break
+                chunk = read_chunk()
+                if not chunk:
+                    continue
+                output_buffer.append(chunk)
+                segment = "".join(output_buffer[segment_start:])
+            return segment
+
+        write_line("agent on")
+        read_until(lambda s: "agent registered" in s.lower(), time.monotonic() + timeout)
+
+        write_line(f"connect {service_id}")
+        deadline = time.monotonic() + timeout
+        segment = read_until(
+            lambda s: PASSPHRASE_PROMPT_RE.search(s) or extract_connman_error(s),
+            deadline,
+        )
+
+        error = extract_connman_error(segment)
+        if error and not PASSPHRASE_PROMPT_RE.search(segment):
+            write_line("quit")
+            raise BackendUnavailableError(error)
+
+        write_line(password)
+        deadline = time.monotonic() + timeout
+        segment = read_until(
+            lambda s: RETRY_PROMPT_RE.search(s) or "connected" in s.lower() or extract_connman_error(s),
+            deadline,
+        )
+
+        if RETRY_PROMPT_RE.search(segment):
+            write_line("no")
+            read_until(lambda s: True, time.monotonic() + 2)
+            write_line("quit")
+            error_message = extract_connman_error(segment) or "Invalid passphrase"
+            raise BackendUnavailableError(error_message)
+
+        error = extract_connman_error(segment)
+        if error:
+            write_line("quit")
+            raise BackendUnavailableError(error)
+
+        write_line("quit")
+        return "".join(output_buffer)
+
+    def _drive_interactive_connect(self, service_id: str, password: str, timeout: float = 20.0) -> str:
         if not self.is_tooling_available():
             raise BackendUnavailableError("connmanctl is not installed")
 
-        completed = subprocess.run(
+        # connmanctl fully buffers stdout (no line-flush) unless it is
+        # connected to a real terminal, so a plain pipe never surfaces its
+        # interactive prompts until the process exits. A pty makes connmanctl
+        # see a tty and flush its prompts as they're printed.
+        master_fd, slave_fd = pty.openpty()
+        proc = subprocess.Popen(
             [self._executable],
-            input=script,
-            capture_output=True,
-            text=True,
-            check=False,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            close_fds=True,
         )
-        combined_output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
-        message = extract_connman_error(combined_output)
-        if completed.returncode != 0:
-            if not message:
-                message = combined_output.strip() or f"Interactive connmanctl failed with code {completed.returncode}"
-            raise BackendUnavailableError(message)
-        if message:
-            raise BackendUnavailableError(message)
-        return completed.stdout
+        os.close(slave_fd)
+        sel = selectors.DefaultSelector()
+        sel.register(master_fd, selectors.EVENT_READ)
+
+        def write_line(line: str) -> None:
+            os.write(master_fd, (line + "\n").encode())
+
+        def read_chunk() -> str:
+            events = sel.select(timeout=0.5)
+            if not events:
+                return ""
+            try:
+                data = os.read(master_fd, 4096)
+            except OSError:
+                return ""
+            return data.decode(errors="replace")
+
+        def is_finished() -> bool:
+            return proc.poll() is not None
+
+        try:
+            result = self._run_prompt_driver(write_line, read_chunk, is_finished, service_id, password, timeout)
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            return result
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            sel.close()
+            os.close(master_fd)
 
     def _technologies(self) -> dict[InterfaceKind, TechnologyStatus]:
         return parse_technologies_output(self._run("technologies"))
@@ -304,7 +413,7 @@ class ConnManBackend(NetworkBackend):
             self._run("connect", profile.service_id)
         except BackendUnavailableError as exc:
             if profile.password:
-                self._run_interactive(build_interactive_connect_script(profile.service_id, profile.password))
+                self._drive_interactive_connect(profile.service_id, profile.password)
             else:
                 raise exc
 
