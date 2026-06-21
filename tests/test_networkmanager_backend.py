@@ -26,9 +26,9 @@ DEVICE_STATUS_OUTPUT = (
 
 
 CONNECTIONS_OUTPUT = (
-    "Home Network:11111111-1111-1111-1111-111111111111:802-11-wireless:yes:yes:Home Network\n"
-    "Guest Network:22222222-2222-2222-2222-222222222222:802-11-wireless:no:no:Guest Network\n"
-    "Wired connection 1:33333333-3333-3333-3333-333333333333:802-3-ethernet:yes:no:\n"
+    "Home Network:11111111-1111-1111-1111-111111111111:802-11-wireless:yes:yes\n"
+    "Guest Network:22222222-2222-2222-2222-222222222222:802-11-wireless:no:no\n"
+    "Wired connection 1:33333333-3333-3333-3333-333333333333:802-3-ethernet:yes:no\n"
 )
 
 
@@ -72,19 +72,41 @@ class ParseDeviceStatusOutputTests(unittest.TestCase):
 
 class ParseConnectionsOutputTests(unittest.TestCase):
     def test_parses_wifi_and_ethernet_profiles(self) -> None:
+        # `connection show` (the list form) only exposes generic fields --
+        # type-specific properties like 802-11-wireless.ssid are invalid
+        # here, so parse_connections_output never fills in ssid itself.
         connections = parse_connections_output(CONNECTIONS_OUTPUT)
         self.assertEqual(len(connections), 3)
+        self.assertTrue(all(c.ssid is None for c in connections))
 
         home = next(c for c in connections if c.name == "Home Network")
         self.assertEqual(home.kind, InterfaceKind.WIFI)
         self.assertTrue(home.autoconnect)
         self.assertTrue(home.active)
-        self.assertEqual(home.ssid, "Home Network")
 
         guest = next(c for c in connections if c.name == "Guest Network")
         self.assertFalse(guest.autoconnect)
         self.assertFalse(guest.active)
 
+        wired = next(c for c in connections if c.kind is InterfaceKind.ETHERNET)
+        self.assertIsNone(wired.ssid)
+
+
+class BackendConnectionsTests(unittest.TestCase):
+    def test_connections_resolves_ssid_per_wifi_profile_with_a_separate_call(self) -> None:
+        backend = NetworkManagerBackend(executable="nmcli")
+        with mock.patch.object(NetworkManagerBackend, "_run") as run:
+            run.side_effect = [CONNECTIONS_OUTPUT, "Home Network\n", "Guest Network\n"]
+            connections = backend._connections()
+
+        run.assert_any_call(
+            "-t", "-f", "NAME,UUID,TYPE,AUTOCONNECT,ACTIVE", "connection", "show"
+        )
+        run.assert_any_call(
+            "-g", "802-11-wireless.ssid", "connection", "show", "11111111-1111-1111-1111-111111111111"
+        )
+        home = next(c for c in connections if c.name == "Home Network")
+        self.assertEqual(home.ssid, "Home Network")
         wired = next(c for c in connections if c.kind is InterfaceKind.ETHERNET)
         self.assertIsNone(wired.ssid)
 

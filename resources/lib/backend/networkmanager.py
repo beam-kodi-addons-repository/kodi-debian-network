@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from .base import BackendUnavailableError, NetworkBackend
@@ -96,14 +96,19 @@ def parse_device_status_output(output: str) -> tuple[DeviceStatus, ...]:
 
 
 def parse_connections_output(output: str) -> tuple[ConnectionProfile, ...]:
+    # `connection show` (the list form) only allows the generic connection
+    # fields (NAME, UUID, TYPE, AUTOCONNECT, ACTIVE, ...) -- type-specific
+    # properties like 802-11-wireless.ssid are only valid for `connection
+    # show <id>` against a single connection, so the SSID is resolved
+    # separately per wifi connection (see NetworkManagerBackend._connections).
     connections: list[ConnectionProfile] = []
     for raw_line in output.splitlines():
         if not raw_line.strip():
             continue
         fields = split_terse_fields(raw_line)
-        if len(fields) < 6:
+        if len(fields) < 5:
             continue
-        name, uuid, kind_text, autoconnect, active, ssid = fields[:6]
+        name, uuid, kind_text, autoconnect, active = fields[:5]
         kind_text = kind_text.strip()
         if kind_text == "802-11-wireless":
             kind = InterfaceKind.WIFI
@@ -118,7 +123,7 @@ def parse_connections_output(output: str) -> tuple[ConnectionProfile, ...]:
                 kind=kind,
                 autoconnect=autoconnect.strip().lower() == "yes",
                 active=active.strip().lower() == "yes",
-                ssid=ssid.strip() or None,
+                ssid=None,
             )
         )
     return tuple(connections)
@@ -220,10 +225,21 @@ class NetworkManagerBackend(NetworkBackend):
         return parse_device_status_output(output)
 
     def _connections(self) -> tuple[ConnectionProfile, ...]:
-        output = self._run_terse(
-            "NAME,UUID,TYPE,AUTOCONNECT,ACTIVE,802-11-wireless.ssid", "connection", "show"
+        output = self._run_terse("NAME,UUID,TYPE,AUTOCONNECT,ACTIVE", "connection", "show")
+        connections = parse_connections_output(output)
+        return tuple(
+            replace(connection, ssid=self._connection_ssid(connection.uuid))
+            if connection.kind is InterfaceKind.WIFI
+            else connection
+            for connection in connections
         )
-        return parse_connections_output(output)
+
+    def _connection_ssid(self, uuid: str) -> str | None:
+        try:
+            output = self._run("-g", "802-11-wireless.ssid", "connection", "show", uuid)
+        except BackendUnavailableError:
+            return None
+        return output.strip() or None
 
     def _wifi_radio_enabled(self) -> bool:
         try:
