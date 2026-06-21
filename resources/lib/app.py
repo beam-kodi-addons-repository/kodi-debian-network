@@ -467,7 +467,10 @@ class NetworkAssistantApp:
             items.append(MenuItem(self._label(30048, "No saved networks"), "root", {}, False))
         else:
             for access_point in saved:
-                label_bits = [self._ssid_label(access_point.ssid)]
+                name = self._ssid_label(access_point.ssid)
+                if not access_point.ssid and access_point.bssid:
+                    name = f"{name} ({access_point.bssid})"
+                label_bits = [name]
                 if access_point.connected:
                     label_bits.append(self._label(30015, "Connected"))
                 color = "green" if access_point.connected else "yellow"
