@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import unittest
+from unittest import mock
 
-from resources.lib.tailscale import TailscaleStatus, parse_status_json, parse_status_text
+from resources.lib.tailscale import (
+    TailscaleStatus,
+    build_set_enabled_command,
+    parse_status_json,
+    parse_status_text,
+    set_enabled,
+)
 
 
 STATUS_JSON = json.dumps(
@@ -111,6 +119,36 @@ class TailscaleStatusParsingTests(unittest.TestCase):
         )
         self.assertEqual(by_hostname["example-host-b"].status_text, "-")
         self.assertIsNone(by_hostname["example-host-c"].status_text)
+
+
+class TailscaleSetEnabledTests(unittest.TestCase):
+    def test_build_command_up_and_down(self) -> None:
+        self.assertEqual(
+            build_set_enabled_command(True, executable="/usr/bin/tailscale"),
+            ["/usr/bin/tailscale", "up"],
+        )
+        self.assertEqual(
+            build_set_enabled_command(False, executable="/usr/bin/tailscale"),
+            ["/usr/bin/tailscale", "down"],
+        )
+
+    def test_set_enabled_reports_success(self) -> None:
+        completed = subprocess.CompletedProcess(["/usr/bin/tailscale", "up"], 0, stdout="", stderr="")
+        with mock.patch("resources.lib.tailscale.subprocess.run", return_value=completed):
+            result = set_enabled(True, executable="/usr/bin/tailscale")
+        self.assertTrue(result.ok)
+
+    def test_set_enabled_reports_failure(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["/usr/bin/tailscale", "up"],
+            1,
+            stdout="",
+            stderr="failed to connect to local tailscaled",
+        )
+        with mock.patch("resources.lib.tailscale.subprocess.run", return_value=completed):
+            result = set_enabled(True, executable="/usr/bin/tailscale")
+        self.assertFalse(result.ok)
+        self.assertIn("failed to connect", result.output)
 
 
 if __name__ == "__main__":

@@ -135,3 +135,44 @@ def get_status(executable: str | None = None, timeout: float = 5.0) -> Tailscale
         return parse_status_json(completed.stdout, _status_by_ip(binary, timeout))
     except (ValueError, KeyError) as exc:
         return TailscaleStatus(installed=True, message=str(exc))
+
+
+@dataclass(frozen=True)
+class TailscaleCommandResult:
+    returncode: int
+    stdout: str
+    stderr: str
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0
+
+    @property
+    def output(self) -> str:
+        return "\n".join(part for part in (self.stdout.strip(), self.stderr.strip()) if part).strip()
+
+
+def build_set_enabled_command(enabled: bool, executable: str | None = None) -> list[str]:
+    binary = executable or shutil.which("tailscale") or "tailscale"
+    return [binary, "up" if enabled else "down"]
+
+
+def set_enabled(
+    enabled: bool,
+    executable: str | None = None,
+    timeout: float = 15.0,
+) -> TailscaleCommandResult:
+    # `tailscale up`/`down` write root-owned daemon state, so this must be
+    # invoked from the root helper service (see helper/server.py) rather
+    # than from the unprivileged Kodi process.
+    try:
+        completed = subprocess.run(
+            build_set_enabled_command(enabled, executable=executable),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return TailscaleCommandResult(returncode=1, stdout="", stderr=str(exc))
+    return TailscaleCommandResult(returncode=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)

@@ -3,11 +3,13 @@ from __future__ import annotations
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 from resources.lib.helper.client import HelperClient
 from resources.lib.helper.server import HelperRequestHandler, HelperUnixServer
 from resources.lib.backend.demo import DemoBackend
 from resources.lib.models import IPv4Configuration, IPv4Mode, NetworkProfile
+from resources.lib.tailscale import TailscaleCommandResult
 
 
 class HelperServerTests(unittest.TestCase):
@@ -50,6 +52,14 @@ class HelperServerTests(unittest.TestCase):
             forgotten = client.call("forget_wifi", service_id="wifi-test")
             forgotten_ap = next(ap for ap in forgotten["access_points"] if ap["service_id"] == "wifi-test")
             self.assertFalse(forgotten_ap["remembered"])
+
+            with mock.patch(
+                "resources.lib.helper.server.tailscale.set_enabled",
+                return_value=TailscaleCommandResult(returncode=0, stdout="", stderr=""),
+            ) as set_enabled_mock:
+                tailscale_result = client.call("set_tailscale_enabled", enabled=True)
+            set_enabled_mock.assert_called_once_with(True)
+            self.assertTrue(tailscale_result["ok"])
 
 
 if __name__ == "__main__":

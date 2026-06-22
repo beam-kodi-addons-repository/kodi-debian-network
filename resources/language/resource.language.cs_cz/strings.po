@@ -207,3 +207,19 @@ msgstr "nabizi exit node"
 msgctxt "#30058"
 msgid "Health"
 msgstr "Stav sluzby"
+
+msgctxt "#30059"
+msgid "off"
+msgstr "vypnuto"
+
+msgctxt "#30060"
+msgid "on"
+msgstr "zapnuto"
+
+msgctxt "#30061"
+msgid "not installed"
+msgstr "neni nainstalovano"
+
+msgctxt "#30062"
+msgid "Tailscale command failed"
+msgstr "Prikaz Tailscale se nezdaril"

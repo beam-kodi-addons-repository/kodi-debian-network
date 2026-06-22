@@ -42,3 +42,9 @@ class NetworkBackend(ABC):
     @abstractmethod
     def forget_wifi(self, service_id: str) -> NetworkSnapshot:
         raise NotImplementedError
+
+    def set_tailscale_enabled(self, enabled: bool) -> dict[str, object]:
+        # Tailscale up/down write root-owned daemon state, so only the
+        # helper backend (talking to the root helper service) can do
+        # this -- the demo backend has no privileged process to ask.
+        raise BackendUnavailableError("Tailscale control requires the helper service")

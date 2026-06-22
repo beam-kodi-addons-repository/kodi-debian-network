@@ -204,6 +204,9 @@ class NetworkAssistantApp:
         if action == "toggle_interface":
             self.toggle_interface()
             return
+        if action == "toggle_tailscale":
+            self.toggle_tailscale()
+            return
         self.show_root()
 
     def reload_backend(self) -> None:
@@ -394,7 +397,29 @@ class NetworkAssistantApp:
                     )
                 )
 
+        items.append(self._tailscale_menu_item())
+
         self._render(self._label(30008, "Interfaces"), items)
+
+    def _tailscale_menu_item(self) -> MenuItem:
+        if not tailscale.is_installed():
+            return MenuItem(
+                f"{self._label(30051, 'Tailscale')}  {self._label(30061, 'not installed')}",
+                "root",
+                {},
+                False,
+            )
+
+        status = tailscale.get_status()
+        word = self._label(30060, "on") if status.running else self._label(30059, "off")
+        color = "green" if status.running else "red"
+        return MenuItem(
+            f"{self._label(30051, 'Tailscale')}  {word}",
+            "toggle_tailscale",
+            {},
+            False,
+            color,
+        )
 
     def refresh_interfaces(self) -> None:
         self._refresh_container()
@@ -557,6 +582,30 @@ class NetworkAssistantApp:
             self.backend.set_interface_enabled(interface.kind, not interface.enabled)
         except (BackendUnavailableError, Exception) as exc:
             self._notify(self._label(30009, "Status"), str(exc), level="error")
+
+        self._refresh_container()
+        self.show_interfaces()
+
+    def toggle_tailscale(self) -> None:
+        status = tailscale.get_status()
+        if not status.installed:
+            self._notify(self._label(30051, "Tailscale"), self._label(30061, "not installed"), level="error")
+            self.show_interfaces()
+            return
+
+        try:
+            result = self.backend.set_tailscale_enabled(not status.running)
+        except (BackendUnavailableError, Exception) as exc:
+            self._notify(self._label(30051, "Tailscale"), str(exc), level="error")
+            self.show_interfaces()
+            return
+
+        if result.get("ok"):
+            word = self._label(30059, "off") if status.running else self._label(30060, "on")
+            self._notify(self._label(30051, "Tailscale"), word)
+        else:
+            message = str(result.get("output") or "") or self._label(30062, "Tailscale command failed")
+            self._notify(self._label(30051, "Tailscale"), message, level="error")
 
         self._refresh_container()
         self.show_interfaces()

@@ -207,3 +207,19 @@ msgstr "offers exit node"
 msgctxt "#30058"
 msgid "Health"
 msgstr "Health"
+
+msgctxt "#30059"
+msgid "off"
+msgstr "off"
+
+msgctxt "#30060"
+msgid "on"
+msgstr "on"
+
+msgctxt "#30061"
+msgid "not installed"
+msgstr "not installed"
+
+msgctxt "#30062"
+msgid "Tailscale command failed"
+msgstr "Tailscale command failed"

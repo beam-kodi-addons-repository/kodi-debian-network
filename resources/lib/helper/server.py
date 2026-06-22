@@ -11,6 +11,7 @@ ADDON_ROOT = Path(__file__).resolve().parents[3]
 if str(ADDON_ROOT) not in sys.path:
     sys.path.insert(0, str(ADDON_ROOT))
 
+from resources.lib import tailscale
 from resources.lib.backend.base import BackendUnavailableError
 from resources.lib.backend.demo import DemoBackend
 from resources.lib.backend.networkmanager import NetworkManagerBackend
@@ -84,6 +85,12 @@ def dispatch_request(backend: Any, payload: Mapping[str, Any]) -> dict[str, Any]
     if request.method == "forget_wifi":
         snapshot = backend.forget_wifi(str(request.params.get("service_id", "")))
         return RpcResponse.success(snapshot.to_dict(), request.request_id).to_dict()
+
+    if request.method == "set_tailscale_enabled":
+        # The helper service runs as root, so it can call `tailscale up`/
+        # `down` directly -- no sudo needed.
+        result = tailscale.set_enabled(bool(request.params.get("enabled", False)))
+        return RpcResponse.success({"ok": result.ok, "output": result.output}, request.request_id).to_dict()
 
     raise BackendUnavailableError(f"Unsupported helper method: {request.method}")
 

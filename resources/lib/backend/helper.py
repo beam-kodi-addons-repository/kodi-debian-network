@@ -63,3 +63,6 @@ class HelperBackend(NetworkBackend):
     def forget_wifi(self, service_id: str) -> NetworkSnapshot:
         payload = self._client.call("forget_wifi", timeout=MUTATE_TIMEOUT, service_id=service_id)
         return NetworkSnapshot.from_dict(payload)
+
+    def set_tailscale_enabled(self, enabled: bool) -> dict[str, object]:
+        return dict(self._client.call("set_tailscale_enabled", timeout=MUTATE_TIMEOUT, enabled=enabled))
