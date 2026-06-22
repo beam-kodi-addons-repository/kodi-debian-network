@@ -202,14 +202,29 @@ class BackendCommandTests(unittest.TestCase):
         run.assert_called_once_with("radio", "wifi", "on")
         snapshot.assert_called_once()
 
-    def test_set_interface_enabled_ethernet_uses_device_connect(self) -> None:
+    def test_set_interface_enabled_ethernet_disable_unmanages_device(self) -> None:
         backend = NetworkManagerBackend(executable="nmcli")
         with mock.patch.object(NetworkManagerBackend, "_device_statuses") as statuses, \
                 mock.patch.object(NetworkManagerBackend, "_run") as run, \
                 mock.patch.object(NetworkManagerBackend, "snapshot") as snapshot:
             statuses.return_value = parse_device_status_output(DEVICE_STATUS_OUTPUT)
             backend.set_interface_enabled(InterfaceKind.ETHERNET, False)
-        run.assert_called_once_with("device", "disconnect", "eth0")
+        run.assert_called_once_with("device", "set", "eth0", "managed", "no")
+        snapshot.assert_called_once()
+
+    def test_set_interface_enabled_ethernet_enable_remanages_and_connects(self) -> None:
+        backend = NetworkManagerBackend(executable="nmcli")
+        with mock.patch.object(NetworkManagerBackend, "_device_statuses") as statuses, \
+                mock.patch.object(NetworkManagerBackend, "_run") as run, \
+                mock.patch.object(NetworkManagerBackend, "snapshot") as snapshot:
+            statuses.return_value = parse_device_status_output(DEVICE_STATUS_OUTPUT)
+            backend.set_interface_enabled(InterfaceKind.ETHERNET, True)
+        run.assert_has_calls(
+            [
+                mock.call("device", "set", "eth0", "managed", "yes"),
+                mock.call("device", "connect", "eth0"),
+            ]
+        )
         snapshot.assert_called_once()
 
     def test_disconnect_saved_connection(self) -> None:

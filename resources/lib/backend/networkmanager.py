@@ -485,11 +485,17 @@ class NetworkManagerBackend(NetworkBackend):
         if interface_kind is InterfaceKind.WIFI:
             self._run("radio", "wifi", "on" if enabled else "off")
         else:
-            # NetworkManager has no global ethernet radio kill switch, so
-            # "enabled" maps to connecting/disconnecting each ethernet device.
+            # NetworkManager has no global ethernet radio kill switch.
+            # "device disconnect" only drops the active connection -- the
+            # device state becomes "disconnected", never "unmanaged", so
+            # snapshot()'s `state != "unmanaged"` check kept reporting the
+            # interface as enabled even though it had no networking.
+            # Un-managing the device is what actually flips that state.
             for status in self._device_statuses():
                 if status.kind is InterfaceKind.ETHERNET:
-                    self._run("device", "connect" if enabled else "disconnect", status.device)
+                    self._run("device", "set", status.device, "managed", "yes" if enabled else "no")
+                    if enabled:
+                        self._run("device", "connect", status.device)
         return self.snapshot()
 
     def save_profile(self, profile: NetworkProfile) -> NetworkProfile:
